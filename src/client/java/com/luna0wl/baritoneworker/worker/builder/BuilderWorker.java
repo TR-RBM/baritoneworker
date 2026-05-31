@@ -100,10 +100,6 @@ public final class BuilderWorker {
             chat(mc, "§cJoin a world first.");
             return;
         }
-        if (!config.hasArea()) {
-            chat(mc, "§cNo supply area set. Make a Baritone selection (#sel 1 / #sel 2) then run §e#builder area§c.");
-            return;
-        }
         baritone = null;
         fileOrigin = null;
         String source = config.hasSchematicFile()
@@ -111,10 +107,17 @@ public final class BuilderWorker {
                 : "§a litematic=§e#" + config.litematicIndex;
         chat(mc, "§aStarted. buildHome=§e" + config.workHome + "§a baseHome=§e" + config.baseHome
                 + source
+                + (config.hasArea() ? "" : "§a (no supply area — build-only, won't restock)")
                 + (config.hasStop() ? "§a stopAt=§e" + posStr(config.stopPos) : ""));
 
         int blocks = ContainerService.countMatching(mc.player.getInventory(), MATERIAL);
         if (blocks == 0) {
+            if (!config.hasArea()) {
+                chat(mc, "§cNo blocks on hand and no supply area set. Put blocks in your inventory, "
+                        + "or set a supply area with §e#sel 1§c/§e#sel 2§c then §e#builder area§c.");
+                state = BuilderState.IDLE;
+                return;
+            }
             chat(mc, "No blocks on hand — fetching materials first.");
             setState(mc, BuilderState.GO_TO_HOME);
         } else {
@@ -240,9 +243,15 @@ public final class BuilderWorker {
                 stop(mc);
             }
         } else {
-            // It was building and has now stopped → out of materials. Go refill.
+            // It was building and has now stopped → out of materials (or finished).
             if (idleTicks > Math.max(1, config.idleReissueTicks)) {
                 int blocks = ContainerService.countMatching(mc.player.getInventory(), MATERIAL);
+                if (!config.hasArea()) {
+                    chat(mc, "§eStopped (blocks=" + blocks + "). No supply area set, so nothing to restock from — "
+                            + "schematic may be complete, or refill your inventory and start again.");
+                    stop(mc);
+                    return;
+                }
                 chat(mc, "Out of materials (blocks=" + blocks + ") — restocking.");
                 cancelBaritone();
                 setState(mc, BuilderState.RESET_HOME);

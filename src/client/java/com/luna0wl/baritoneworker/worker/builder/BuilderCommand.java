@@ -41,7 +41,8 @@ public final class BuilderCommand extends Command {
                 printStatus();
                 return;
             }
-            String sub = args.getString().toLowerCase(Locale.ROOT);
+            String raw = args.getString();              // original case — needed for filenames
+            String sub = raw.toLowerCase(Locale.ROOT);   // case-insensitive subcommand matching
             switch (sub) {
                 case "start" -> worker.start(ctx.minecraft());
                 case "stop" -> worker.stop(ctx.minecraft());
@@ -56,11 +57,12 @@ public final class BuilderCommand extends Command {
                 case "origin" -> doOrigin(args);
                 case "stopat" -> doStopAt(args);
                 default -> {
-                    // Bare filename like `#builder house.litematic` → set the file and start, à la #build.
-                    if (sub.contains(".")) {
-                        config.schematicFile = sub;
+                    // Bare filename like `#builder ZMinus.litematic` → set the file and start, à la #build.
+                    // Use the original-case `raw`; filenames are case-sensitive on Linux/macOS.
+                    if (raw.contains(".")) {
+                        config.schematicFile = raw;
                         config.save();
-                        logDirect("Schematic file = §e" + sub + "§r — starting.");
+                        logDirect("Schematic file = §e" + raw + "§r — starting.");
                         worker.start(ctx.minecraft());
                     } else {
                         logDirect("Unknown subcommand '" + sub + "'. Try: " + String.join(", ", SUBS));
