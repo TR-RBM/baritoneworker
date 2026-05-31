@@ -41,8 +41,16 @@ Build with `JAVA_HOME=<jdk-25> ./gradlew build`, then drop
    inventory** `#mover start`.
 
 ## Builder
-1. Open your schematic in **Litematica**. `/sethome build` at the site; `/sethome Home` by the supply room.
-2. Stock the supply room with the schematic's blocks (+ food). `#sel 1`/`#sel 2` → `#builder area`.
-3. Optional finish line: `#builder stopat <x> <y> <z>`. Then `#builder start` — it refills blocks when it runs dry and resumes.
+Builds a schematic **file** (from `schematics/`, like `#build`) or the placement
+open in **Litematica**.
+
+1. `/sethome build` at the site; `/sethome Home` by the supply room.
+2. *(optional, for hands-free restock)* stock the supply room with the schematic's
+   blocks (+ food), then `#sel 1`/`#sel 2` → `#builder area`. With blocks in your
+   inventory you can skip this — it just stops when it runs dry.
+3. **File:** drop `ZMinus.litematic` in `schematics/`, stand where it should start,
+   and run `#builder ZMinus.litematic` (anchored at the block you're standing on).
+   **Litematica:** open the placement instead and run `#builder start`.
+4. Optional finish line: `#builder stopat <x> <y> <z>`.
 
 Full details in `README.md`.

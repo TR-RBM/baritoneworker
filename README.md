@@ -10,7 +10,7 @@ one drives an unattended loop on a server with Essentials-style home commands
 | **Lumber** | `#lumber` | Roams a forest chopping logs (Baritone `mine`), hauls wood home, restocks axe + food, optionally replants. |
 | **Sorter** | `#sorter` | Organizes the chests in an area so each item lands in the chest tagged for it. |
 | **Mover**  | `#mover`  | Moves every chest in a source area into a destination area — a positional copy, or re-sorted. |
-| **Builder**| `#builder`| Builds the schematic you've opened in **Litematica**, fetching more blocks from a supply area when it runs dry. |
+| **Builder**| `#builder`| Builds a schematic file (`#builder file.litematic`) or the placement open in **Litematica**, fetching more blocks from a supply area when it runs dry. |
 
 The workers are independent; **run one at a time**.
 
@@ -170,22 +170,39 @@ tag scheme the sorter uses (signs + `sortscheme.json`).
 
 ## Builder — `#builder`
 
-Builds the schematic currently open in **Litematica** (requires the Litematica
-mod). It runs Baritone's builder; when it runs out of blocks it resets the build
+Builds a schematic with Baritone; when it runs out of blocks it resets the build
 home to the spot it left off, teleports to a supply room, refills on blocks (and
 food), teleports back, and resumes — the same home-dance the miner uses.
 
-1. Open/place your schematic in Litematica.
+Two ways to choose **what** to build:
+
+- **A schematic file** from your `schematics/` folder (no Litematica needed),
+  just like Baritone's own `#build`:
+  `#builder ZMinus.litematic` — sets the file and starts in one go.
+  The schematic is anchored at **the block you're standing on** when you run the
+  command (captured before the teleport), so stand exactly where you want it to
+  begin. Supports `.litematic`, `.schematic`, and `.schem`.
+- **The placement currently open in Litematica** (requires the Litematica mod) —
+  leave the file unset (or `#builder file clear`) and it builds the open placement.
+
+A supply area is **optional**: with blocks already in your inventory it just
+builds (and stops when it runs dry); set an area and it restocks and resumes
+hands-free.
+
+Quick start (file build):
+1. Put `ZMinus.litematic` in your game dir's `schematics/` folder.
 2. `/sethome build` at the build site, `/sethome Home` by your supply room.
-3. Stock the supply room with the blocks the schematic needs (+ food).
-4. `#sel 1` / `#sel 2` around the supply room, then `#builder area`.
-5. *(optional)* set a finish line: `#builder stopat <x> <y> <z>` (or `stopat here`).
-6. `#builder start`.
+3. *(optional, for hands-free)* stock the supply room, then `#sel 1` / `#sel 2`
+   around it and run `#builder area`.
+4. Stand where the schematic should start and run `#builder ZMinus.litematic`.
 
 | Command | Effect |
 |---------|--------|
 | `#builder start` / `stop` | run / halt |
-| `#builder area [clear]` | capture the current selection as the supply area |
+| `#builder <file>` | shortcut: set the schematic file and start (like `#build`) |
+| `#builder file <name\|clear>` | build a file from `schematics/` (`clear` = open Litematica placement) |
+| `#builder origin here\|<x> <y> <z>\|clear` | fixed corner for the file build (`clear` = auto: the block you stand on) |
+| `#builder area [clear]` | capture the current selection as the supply area (optional) |
 | `#builder food <n\|item>` | how much / which food to keep (default `64`) |
 | `#builder work <name>` / `home <name>` | build-site and base home names (default `build` / `Home`) |
 | `#builder litematic <index>` | which open Litematica placement to build (default `0`) |
