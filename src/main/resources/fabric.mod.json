@@ -1,0 +1,41 @@
+{
+	"schemaVersion": 1,
+	"id": "baritoneworker",
+	"version": "${version}",
+	"name": "BaritoneWorker",
+	"description": "Autonomous Baritone workers: a strip-miner, a lumberjack, a stash sorter, a stash mover, and a Litematica builder. Each teleports via /home, services chests in a selected area, and runs unattended.",
+	"authors": [
+		"luna0wl"
+	],
+	"contact": {
+		"homepage": "https://baritone.leijurv.com/",
+		"sources": "https://github.com/luna0wl/baritoneworker"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/baritoneworker/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.luna0wl.baritoneworker.BaritoneWorker"
+		],
+		"client": [
+			"com.luna0wl.baritoneworker.client.BaritoneWorkerClient"
+		]
+	},
+	"mixins": [
+		"baritoneworker.mixins.json",
+		{
+			"config": "baritoneworker.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.2",
+		"minecraft": "~26.1.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"baritone-meteor": "*"
+	}
+}
