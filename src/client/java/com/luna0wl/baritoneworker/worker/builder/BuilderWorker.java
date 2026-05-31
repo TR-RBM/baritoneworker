@@ -101,9 +101,14 @@ public final class BuilderWorker {
             return;
         }
         baritone = null;
-        fileOrigin = null;
+        // For a file build with no explicit origin, anchor the schematic at the block
+        // we're standing on RIGHT NOW — captured before GO_TO_WORK teleports us away.
+        fileOrigin = (config.hasSchematicFile() && config.buildOriginPos == null)
+                ? mc.player.blockPosition()
+                : null;
         String source = config.hasSchematicFile()
                 ? "§a file=§e" + config.schematicFile
+                    + "§a origin=§e" + (config.buildOriginPos != null ? posStr(config.buildOriginPos) : posStr(blockArr(fileOrigin)))
                 : "§a litematic=§e#" + config.litematicIndex;
         chat(mc, "§aStarted. buildHome=§e" + config.workHome + "§a baseHome=§e" + config.baseHome
                 + source
@@ -520,6 +525,10 @@ public final class BuilderWorker {
 
     private static String posStr(int[] p) {
         return p == null ? "?" : p[0] + " " + p[1] + " " + p[2];
+    }
+
+    private static int[] blockArr(BlockPos p) {
+        return p == null ? null : new int[]{p.getX(), p.getY(), p.getZ()};
     }
 
     private void chat(Minecraft mc, String msg) {
