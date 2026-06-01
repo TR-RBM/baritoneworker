@@ -23,7 +23,7 @@ public final class BuilderCommand extends Command {
 
     private static final List<String> SUBS = List.of(
             "start", "stop", "status", "area", "food", "work", "home",
-            "litematic", "file", "origin", "stopat", "save");
+            "litematic", "file", "origin", "stopat", "sethome", "builds", "save");
 
     private final BuilderWorker worker;
     private final BuilderConfig config;
@@ -56,6 +56,8 @@ public final class BuilderCommand extends Command {
                 case "file" -> doFile(args);
                 case "origin" -> doOrigin(args);
                 case "stopat" -> doStopAt(args);
+                case "sethome" -> doSetHome(args);
+                case "builds" -> doBuilds(args);
                 default -> {
                     // Bare filename like `#builder ZMinus.litematic` → set the file and start, à la #build.
                     // Use the original-case `raw`; filenames are case-sensitive on Linux/macOS.
@@ -131,6 +133,55 @@ public final class BuilderCommand extends Command {
                 }
             }
         }
+    }
+
+    /** {@code #builder sethome on|off} — whether to delhome/sethome the work home when materials run out. */
+    private void doSetHome(IArgConsumer args) {
+        if (!args.hasAny()) {
+            logDirect("sethome-on-leaving = " + (config.resetWorkHome ? "§aon" : "§coff")
+                    + "§r — " + (config.resetWorkHome
+                        ? "moves the '" + config.workHome + "' home to where it stops each trip."
+                        : "keeps your existing '" + config.workHome + "' home untouched."));
+            logDirect("Usage: §e#builder sethome on|off");
+            return;
+        }
+        String a = args.getString().toLowerCase(Locale.ROOT);
+        boolean on = a.equals("on") || a.equals("true") || a.equals("yes") || a.equals("1");
+        boolean off = a.equals("off") || a.equals("false") || a.equals("no") || a.equals("0");
+        if (!on && !off) {
+            logDirect("Usage: §e#builder sethome on|off");
+            return;
+        }
+        config.resetWorkHome = on;
+        config.save();
+        logDirect("sethome-on-leaving = " + (on ? "§aon§r — will /delhome+/sethome '" + config.workHome
+                + "' where it stops each trip." : "§coff§r — keeps your existing '" + config.workHome + "' home."));
+    }
+
+    /** {@code #builder builds <n|infinite>} — how many repeated builds' worth of materials to carry per trip. */
+    private void doBuilds(IArgConsumer args) {
+        if (!args.hasAny()) {
+            logDirect("builds-per-trip = §e" + buildsStr() + "§r (materials carried per supply trip for buildRepeat).");
+            logDirect("Usage: §e#builder builds <n|infinite>");
+            return;
+        }
+        String a = args.getString().trim().toLowerCase(Locale.ROOT);
+        if (a.equals("infinite") || a.equals("inf") || a.equals("all") || a.equals("max")) {
+            config.materialBuilds = 0;
+        } else {
+            try {
+                config.materialBuilds = Math.max(0, Integer.parseInt(a));
+            } catch (NumberFormatException e) {
+                logDirect("Usage: §e#builder builds <n|infinite>§r (a count, or 'infinite' to fill the bag).");
+                return;
+            }
+        }
+        config.save();
+        logDirect("builds-per-trip = §e" + buildsStr() + "§r.");
+    }
+
+    private String buildsStr() {
+        return config.materialBuilds <= 0 ? "infinite (fill the bag)" : Integer.toString(config.materialBuilds);
     }
 
     /** {@code #builder file <name> | clear} — build a schematic file instead of the open Litematica placement. */
@@ -232,6 +283,8 @@ public final class BuilderCommand extends Command {
         logDirect(" supplyArea=§e" + config.chestBoxes.size() + "§r box(es)"
                 + (config.hasArea() ? "" : " §c(not set — run #builder area)"));
         logDirect(" stopAt=" + (config.hasStop() ? "§e" + posStr(config.stopPos) + "§r r=" + config.stopRadius : "§c(off)"));
+        logDirect(" sethome-on-leaving=" + (config.resetWorkHome ? "§aon" : "§coff")
+                + "§r builds-per-trip=§e" + buildsStr());
     }
 
     @Override
@@ -271,6 +324,8 @@ public final class BuilderCommand extends Command {
                 "> builder file <name|clear> - build a schematic file from schematics/ (clear = open placement)",
                 "> builder origin here | <x> <y> <z> | clear - fixed corner for the file build (clear = auto)",
                 "> builder stopat here | <x> <y> <z> | radius <n> | clear - stop when this spot is reached",
+                "> builder sethome on|off - move the 'build' home to where it stops each trip (default off)",
+                "> builder builds <n|infinite> - buildRepeat: materials to carry per supply trip (default 1)",
                 "",
                 "Two build sources: the schematic open in Litematica (default), or a schematic FILE",
                 "from your schematics/ folder (set with 'file', just like Baritone's own #build —",

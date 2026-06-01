@@ -3,45 +3,83 @@ package com.luna0wl.baritoneworker.worker.builder;
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.pathing.goals.GoalGetToBlock;
+import baritone.api.schematic.IStaticSchematic;
+import baritone.api.schematic.format.ISchematicFormat;
 import baritone.api.utils.RotationUtils;
 import com.luna0wl.baritoneworker.worker.common.Baritones;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
+import com.luna0wl.baritoneworker.worker.common.ItemNames;
 import com.luna0wl.baritoneworker.worker.common.MenuActions;
 import com.luna0wl.baritoneworker.worker.common.Teleporter;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Vec3i;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.Tuple;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 /**
  * The autonomous builder loop, driven once per client tick. Baritone builds the
- * schematic currently open in Litematica; the worker watches the build and, when
- * it runs out of materials, resets the build home to the current spot, teleports
- * to the supply room, refills on blocks (and food), teleports back, and resumes —
+ * schematic currently open in Litematica (or a schematic file); the worker watches
+ * the build and, when it runs out of materials (Baritone prints "Missing materials …
+ * Pausing"), teleports to the supply room, refills, teleports back, and resumes —
  * the same loop the miner uses, triggered by low materials instead of a full bag.
  *
- * <p>Stops when the optional coordinate target is reached, or when a refill can't
- * find more blocks and the build can't progress.
+ * <p>Refills are recipe-aware: the worker reads the schematic and subtracts what's
+ * already placed in the world, so it only fetches the blocks the build still needs
+ * — never block types the build doesn't use, and never more of a type than is left
+ * to place (so repeat / partially-finished builds don't haul materials they already
+ * used). If the schematic can't be read it falls back to restocking any block.
+ *
+ * <p>Unlike the miner the build site is world-anchored, so the work home is left
+ * untouched by default (see {@link BuilderConfig#resetWorkHome}); the bot just
+ * teleports back to the existing {@code build} home to resume.
+ *
+ * <p>Stops when the optional coordinate target is reached, when the build is complete
+ * (nothing left to place), or when a refill can't find the blocks it still needs.
  */
 public final class BuilderWorker {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritoneworker/builder");
 
-    /** "Materials" = any placeable block item. */
-    private static final Predicate<Item> MATERIAL = item -> item instanceof BlockItem;
+    /** Fallback "materials" definition when we couldn't read the schematic: any placeable block. */
+    private static final Predicate<Item> ANY_BLOCK = item -> item instanceof BlockItem;
+
+    /** Don't world-diff schematics bigger than this (avoids a multi-second freeze on giant builds). */
+    private static final long MAX_DIFF_VOLUME = 4_000_000L;
+
+    /**
+     * Blocks the build still needs → how many are left to place (the schematic's counts with
+     * everything already placed in the world subtracted). {@code null} means we couldn't read
+     * the schematic, in which case we fall back to {@link #ANY_BLOCK}. Refreshed against the
+     * live world each time we run out, so repeat / partially-finished builds only ever fetch
+     * what's actually still missing.
+     */
+    private Map<Item, Integer> required;
+    private boolean warnedNoSchematic;
+    /** True when the current build tiles via Baritone's buildRepeat (set by refreshRequired). */
+    private boolean repeating;
 
     private final BuilderConfig config;
     private final Teleporter teleporter = new Teleporter();
@@ -101,6 +139,8 @@ public final class BuilderWorker {
             return;
         }
         baritone = null;
+        required = null;
+        warnedNoSchematic = false;
         // For a file build with no explicit origin, anchor the schematic at the block
         // we're standing on RIGHT NOW — captured before GO_TO_WORK teleports us away.
         fileOrigin = (config.hasSchematicFile() && config.buildOriginPos == null)
@@ -115,10 +155,20 @@ public final class BuilderWorker {
                 + (config.hasArea() ? "" : "§a (no supply area — build-only, won't restock)")
                 + (config.hasStop() ? "§a stopAt=§e" + posStr(config.stopPos) : ""));
 
-        int blocks = ContainerService.countMatching(mc.player.getInventory(), MATERIAL);
+        // Read the schematic's material list and subtract what's already placed in the
+        // world, so we only ever fetch blocks the build still needs (handles repeat /
+        // partially-finished builds — see refreshRequired).
+        refreshRequired(mc);
+        if (required != null && required.isEmpty()) {
+            chat(mc, "§aNothing left to place — the build is already complete. Stopping.");
+            state = BuilderState.IDLE;
+            return;
+        }
+
+        int blocks = ContainerService.countMatching(mc.player.getInventory(), this::isMaterial);
         if (blocks == 0) {
             if (!config.hasArea()) {
-                chat(mc, "§cNo blocks on hand and no supply area set. Put blocks in your inventory, "
+                chat(mc, "§cNo usable blocks on hand and no supply area set. Put the build's blocks in your inventory, "
                         + "or set a supply area with §e#sel 1§c/§e#sel 2§c then §e#builder area§c.");
                 state = BuilderState.IDLE;
                 return;
@@ -232,17 +282,30 @@ public final class BuilderWorker {
 
         // Out of materials: Baritone prints "Missing materials ... Pausing" and sets the
         // builder paused. It does NOT clear the schematic, so isActive() keeps returning
-        // true — the build just sits there doing nothing. Detect the pause explicitly and
-        // run the restock loop (reset build home → base → refill → resume).
+        // true — the build just sits there doing nothing. A pause is ALWAYS "needs blocks",
+        // never completion (with buildrepeat it just needs materials for the next tile), so
+        // detect it explicitly and run the restock loop (base → refill → resume).
         if (baritone.getBuilderProcess().isPaused()) {
-            int blocks = ContainerService.countMatching(mc.player.getInventory(), MATERIAL);
+            // We're still standing at the build (chunks loaded), so recompute the shopping
+            // list against the live world before we go.
+            refreshRequired(mc);
+            Inventory inv = mc.player.getInventory();
+            if (required != null && !stillNeedMaterials(inv)) {
+                // Paused, yet we already carry everything the build still needs — fetching
+                // more can't help; it's blocked on something else (unreachable / unplaceable).
+                chat(mc, "§eBaritone paused but I already hold the needed materials — the build looks blocked "
+                        + "(an unreachable or unplaceable spot). Stopping; check it and resume manually.");
+                stop(mc);
+                return;
+            }
+            int blocks = ContainerService.countMatching(inv, this::isMaterial);
             if (!config.hasArea()) {
-                chat(mc, "§eOut of materials (blocks=" + blocks + ") and no supply area set — "
+                chat(mc, "§eOut of materials (usable blocks=" + blocks + ") and no supply area set — "
                         + "resume manually after refilling, or set an area with §e#sel 1§e/§e#sel 2§e then §e#builder area§e. Stopping.");
                 stop(mc);
                 return;
             }
-            chat(mc, "Out of materials (blocks=" + blocks + ") — Baritone paused, restocking.");
+            chat(mc, "Out of materials (usable blocks=" + blocks + ") — Baritone paused, restocking " + neededSummary() + ".");
             cancelBaritone();
             setState(mc, BuilderState.RESET_HOME);
             return;
@@ -266,24 +329,43 @@ public final class BuilderWorker {
                 stop(mc);
             }
         } else {
-            // It was building and has now stopped → out of materials (or finished).
+            // Was building and is now idle WITHOUT being paused. Out-of-materials is handled
+            // above (it pauses), so the only real reason to land here is that Baritone is done:
+            // when it finishes — or hits the buildrepeat count — it clears the schematic, so
+            // isActive() flips to false. Trust that, NOT a one-tile material diff (which would
+            // read "complete" mid-repeat the moment the base tile is placed).
             if (idleTicks > Math.max(1, config.idleReissueTicks)) {
-                int blocks = ContainerService.countMatching(mc.player.getInventory(), MATERIAL);
-                if (!config.hasArea()) {
-                    chat(mc, "§eStopped (blocks=" + blocks + "). No supply area set, so nothing to restock from — "
-                            + "schematic may be complete, or refill your inventory and start again.");
+                if (!baritone.getBuilderProcess().isActive()) {
+                    chat(mc, "§aBuild complete — Baritone reports done. Stopping.");
                     stop(mc);
-                    return;
+                } else if (!nudged) {
+                    // Still holding a schematic but stalled (not paused, not pathing) — nudge once.
+                    nudged = true;
+                    idleTicks = 0;
+                    issueBuild(mc);
+                } else if (idleTicks > config.resumeGraceTicks) {
+                    chat(mc, "§eBuilder stalled — has a schematic but isn't placing or paused. Stopping; resume manually if needed.");
+                    stop(mc);
                 }
-                chat(mc, "Out of materials (blocks=" + blocks + ") — restocking.");
-                cancelBaritone();
-                setState(mc, BuilderState.RESET_HOME);
             }
         }
     }
 
     private void tickResetHome(Minecraft mc) {
         int g = Math.max(1, config.commandGapTicks);
+        // The build site is world-anchored (the Litematica placement / file origin don't
+        // move), so unlike the miner we must NOT move the work home. When materials run
+        // out the bot is often paused mid-air on scaffolding or atop the structure;
+        // re-running /sethome there would overwrite the user's correct "build" home with
+        // a junk spot — which is exactly the wrong-backport bug. By default we keep the
+        // existing home and just settle a moment before heading to base.
+        if (!config.resetWorkHome) {
+            if (ticksInState >= g) {
+                chat(mc, "Keeping build home — heading to base.");
+                setState(mc, BuilderState.GO_TO_HOME);
+            }
+            return;
+        }
         if (ticksInState == g) {
             sendCommand(mc, "delhome " + config.workHome);
         } else if (ticksInState == 2 * g) {
@@ -357,6 +439,126 @@ public final class BuilderWorker {
         return fileOrigin;
     }
 
+    // --------------------------------------------------- material accounting
+
+    /** A material we care about: a block the build still needs (or any block if the recipe is unknown). */
+    private boolean isMaterial(Item item) {
+        return required != null ? required.containsKey(item) : ANY_BLOCK.test(item);
+    }
+
+    /** Should we pull more of this item, given how many the build has left to place? */
+    private boolean needMore(Inventory inv, Item item) {
+        if (required == null) return true; // unknown recipe → top off the bag (old behavior)
+        int perBuild = required.getOrDefault(item, 0);
+        if (perBuild <= 0) return false;
+        if (repeating && config.materialBuilds <= 0) return true; // infinite → fill the bag
+        int target = repeating ? perBuild * config.materialBuilds : perBuild;
+        return ContainerService.countItem(inv, item) < target;
+    }
+
+    /** True while the build still needs a block type we don't yet carry enough of. */
+    private boolean stillNeedMaterials(Inventory inv) {
+        if (required == null) return true;
+        for (Item it : required.keySet()) {
+            if (needMore(inv, it)) return true;
+        }
+        return false;
+    }
+
+    /** Short list of what's still needed, e.g. "5x cobbled_deepslate, 12x oak_planks". */
+    private String neededSummary() {
+        if (required == null || required.isEmpty()) return "blocks";
+        return required.entrySet().stream()
+                .limit(6)
+                .map(e -> e.getValue() + "x " + ItemNames.idOf(e.getKey()))
+                .collect(Collectors.joining(", "))
+                + (required.size() > 6 ? ", …" : "");
+    }
+
+    /**
+     * Recompute {@link #required}: read the build's schematic and, cell by cell, count only
+     * the blocks not already placed correctly in the live world — so a repeat or partially
+     * finished build only asks for what's genuinely still missing, and never re-fetches
+     * blocks it already used. Call this while standing at the build (chunks loaded). On any
+     * failure leaves {@code required = null}, falling back to the old any-block behavior.
+     */
+    private void refreshRequired(Minecraft mc) {
+        SchematicRef ref = loadSchematic(mc);
+        if (ref == null) {
+            required = null;
+            if (!warnedNoSchematic) {
+                warnedNoSchematic = true;
+                chat(mc, "§eCouldn't read the build's material list — falling back to restocking any blocks. "
+                        + "(Open the Litematica placement, or build from a schematic file.)");
+            }
+            return;
+        }
+        IStaticSchematic sch = ref.schematic();
+        BlockPos origin = ref.origin();
+        long volume = (long) sch.widthX() * sch.heightY() * sch.lengthZ();
+        // With buildrepeat the schematic tiles past the base origin, so a one-tile world diff
+        // would wrongly read "all placed" once the base tile is done. When repeating, skip the
+        // diff and count a full per-tile bill of materials instead — completion is then decided
+        // by Baritone clearing the schematic (see tickBuild), not by this list emptying.
+        Vec3i repeat = BaritoneAPI.getSettings().buildRepeat.value;
+        repeating = repeat != null && (repeat.getX() != 0 || repeat.getY() != 0 || repeat.getZ() != 0);
+        boolean diff = !repeating && mc.level != null && origin != null && volume <= MAX_DIFF_VOLUME;
+        Map<Item, Integer> counts = new LinkedHashMap<>();
+        BlockPos.MutableBlockPos wp = new BlockPos.MutableBlockPos();
+        for (int x = 0; x < sch.widthX(); x++) {
+            for (int y = 0; y < sch.heightY(); y++) {
+                for (int z = 0; z < sch.lengthZ(); z++) {
+                    BlockState desired = sch.getDirect(x, y, z);
+                    if (desired == null || desired.isAir()) continue;
+                    Item item = desired.getBlock().asItem();
+                    if (item == Items.AIR) continue;
+                    if (diff) {
+                        wp.set(origin.getX() + x, origin.getY() + y, origin.getZ() + z);
+                        if (mc.level.isLoaded(wp)) {
+                            BlockState cur = mc.level.getBlockState(wp);
+                            // Right block already there → already built, no longer needed.
+                            if (!cur.isAir() && cur.getBlock().asItem() == item) continue;
+                        }
+                    }
+                    counts.merge(item, 1, Integer::sum);
+                }
+            }
+        }
+        required = counts;
+        warnedNoSchematic = false;
+    }
+
+    /** Load the build's schematic and its world origin — a file build, or the open Litematica placement. */
+    private SchematicRef loadSchematic(Minecraft mc) {
+        try {
+            if (config.hasSchematicFile()) {
+                File f = resolveSchematic(mc);
+                if (!f.exists()) return null;
+                Optional<ISchematicFormat> fmt = BaritoneAPI.getProvider().getSchematicSystem().getByFile(f);
+                if (fmt.isEmpty()) return null;
+                try (InputStream in = Files.newInputStream(f.toPath())) {
+                    IStaticSchematic sch = fmt.get().parse(in);
+                    return sch == null ? null : new SchematicRef(sch, resolveOrigin(mc));
+                }
+            }
+            // Open Litematica placement: Baritone's helper lives in the impl jar (not on our
+            // compile classpath), so reach it reflectively — the same call buildOpenLitematic makes.
+            Class<?> helper = Class.forName("baritone.utils.schematic.litematica.LitematicaHelper");
+            if (!(boolean) helper.getMethod("isLitematicaPresent").invoke(null)) return null;
+            if (!(boolean) helper.getMethod("hasLoadedSchematic", int.class).invoke(null, config.litematicIndex)) return null;
+            Object tuple = helper.getMethod("getSchematic", int.class).invoke(null, config.litematicIndex);
+            @SuppressWarnings("unchecked")
+            Tuple<IStaticSchematic, Vec3i> t = (Tuple<IStaticSchematic, Vec3i>) tuple;
+            Vec3i o = t.getB();
+            return new SchematicRef(t.getA(), new BlockPos(o.getX(), o.getY(), o.getZ()));
+        } catch (Throwable e) {
+            LOG.warn("Couldn't read schematic for material list: {}", e.toString());
+            return null;
+        }
+    }
+
+    private record SchematicRef(IStaticSchematic schematic, BlockPos origin) {}
+
     // ------------------------------------------------------- chest servicing
 
     private void enterServiceChests(Minecraft mc) {
@@ -365,7 +567,7 @@ public final class BuilderWorker {
         chestStep = ChestStep.PATH;
         ticksInStep = 0;
         actionClicks = 0;
-        blocksBeforeService = ContainerService.countMatching(mc.player.getInventory(), MATERIAL);
+        blocksBeforeService = ContainerService.countMatching(mc.player.getInventory(), this::isMaterial);
         chestQueue.addAll(ContainerService.scanChests(mc.level, config.chestBoxes, mc.player.blockPosition()));
         if (chestQueue.isEmpty()) {
             chat(mc, "§cNo chests found in the supply area — stopping.");
@@ -438,7 +640,13 @@ public final class BuilderWorker {
         }
     }
 
-    /** Next supply slot to pull: food up to target, then fill remaining slots with blocks. */
+    /**
+     * Next supply slot to pull: food up to target, then only blocks the build still
+     * needs — and only up to how many are left to place. We never pull a block type the
+     * schematic doesn't use, nor more of a type than {@link #required} still calls for
+     * (which already has the placed/used blocks subtracted), so a repeat or nearly-done
+     * build won't haul materials it no longer needs.
+     */
     private int nextSupplyWithdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
         Inventory inv = mc.player.getInventory();
         if (config.targetFood - ContainerService.countItem(inv, config.foodItem) > 0) {
@@ -446,7 +654,8 @@ public final class BuilderWorker {
             if (s != -1) return s;
         }
         if (ContainerService.freeSlots(inv) > 0) {
-            return ContainerService.nextWithdrawSlotMatching(menu, MATERIAL);
+            return ContainerService.nextWithdrawSlotMatching(menu,
+                    item -> isMaterial(item) && needMore(inv, item));
         }
         return -1;
     }
@@ -454,22 +663,23 @@ public final class BuilderWorker {
     private boolean moreWorkToDo(Minecraft mc) {
         Inventory inv = mc.player.getInventory();
         if (config.targetFood - ContainerService.countItem(inv, config.foodItem) > 0) return true;
-        return ContainerService.freeSlots(inv) > 0; // still room for more materials
+        // Done once the bag is full, or we already hold everything the build still needs.
+        return ContainerService.freeSlots(inv) > 0 && stillNeedMaterials(inv);
     }
 
     private void finishService(Minecraft mc) {
         Inventory inv = mc.player.getInventory();
-        int blocks = ContainerService.countMatching(inv, MATERIAL);
+        int blocks = ContainerService.countMatching(inv, this::isMaterial);
         int food = ContainerService.countItem(inv, config.foodItem);
         if (blocks == 0) {
-            chat(mc, "§cSupply chests are out of blocks — stopping.");
+            chat(mc, "§cSupply chests have none of the blocks this build needs — stopping.");
             stop(mc);
             return;
         }
         if (blocks <= blocksBeforeService) {
-            chat(mc, "§eCouldn't add more blocks (chests low) — building with what's on hand (blocks=" + blocks + ").");
+            chat(mc, "§eCouldn't add more of the needed blocks (chests low) — building with what's on hand (usable blocks=" + blocks + ").");
         } else {
-            chat(mc, "Restocked (blocks=" + blocks + ", food=" + food + "). Back to building.");
+            chat(mc, "Restocked (usable blocks=" + blocks + ", food=" + food + "). Back to building.");
         }
         setState(mc, BuilderState.GO_TO_WORK);
     }

@@ -1,8 +1,9 @@
 # BaritoneWorker
 
-A pack of **autonomous Baritone workers** for Minecraft **26.1.2** (Fabric). Each
-one drives an unattended loop on a server with Essentials-style home commands
-(`/home`, `/sethome`, `/delhome`) and Baritone selections (`#sel`):
+A pack of **autonomous [Baritone](https://github.com/cabaletta/baritone) workers** for
+Minecraft **26.1.2** on [Fabric](https://fabricmc.net/). Each one drives an unattended
+loop on a server using Essentials-style home commands ([`/home`, `/sethome`,
+`/delhome`](https://essentialsx.net/)) and Baritone selections (`#sel`).
 
 | Worker | Command | What it does |
 |--------|---------|--------------|
@@ -10,16 +11,34 @@ one drives an unattended loop on a server with Essentials-style home commands
 | **Lumber** | `#lumber` | Roams a forest chopping logs (Baritone `mine`), hauls wood home, restocks axe + food, optionally replants. |
 | **Sorter** | `#sorter` | Organizes the chests in an area so each item lands in the chest tagged for it. |
 | **Mover**  | `#mover`  | Moves every chest in a source area into a destination area — a positional copy, or re-sorted. |
-| **Builder**| `#builder`| Builds a schematic file (`#builder file.litematic`) or the placement open in **Litematica**, fetching more blocks from a supply area when it runs dry. |
+| **Builder**| `#builder`| Builds a [Litematica](https://modrinth.com/mod/litematica) schematic (or a schematic file), fetching only the blocks it still needs from a supply area when it runs dry. |
 
 The workers are independent; **run one at a time**.
 
 ## Requirements
 
-- Minecraft **26.1.2** + Fabric Loader + Fabric API
-- **Baritone** installed on the client (the `baritone-meteor` build). The mod
-  compiles against the Baritone API but does **not** bundle it — it uses the
-  Baritone you already have installed.
+| | |
+|---|---|
+| **Minecraft** | [`26.1.2`](https://www.minecraft.net/) |
+| **Mod loader** | [Fabric Loader](https://fabricmc.net/use/installer/) `≥ 0.19.2` |
+| **Fabric API** | [fabric-api](https://modrinth.com/mod/fabric-api) (matching `26.1.2`) |
+| **Java** | [`25+`](https://adoptium.net/) (Temurin works well) |
+| **Baritone** | [Baritone](https://github.com/cabaletta/baritone) installed on the client — the `baritone-meteor` build. |
+| **Litematica** *(builder only)* | [Litematica](https://modrinth.com/mod/litematica) — needed only to build an *open placement*; building from a schematic **file** doesn't require it. |
+| **Server homes** | An Essentials-style `/home` / `/sethome` / `/delhome` plugin such as [EssentialsX](https://essentialsx.net/). |
+
+The mod compiles against the Baritone **API** but does **not** bundle it — it uses the
+Baritone you already have installed.
+
+## Install
+
+1. Install [Fabric Loader](https://fabricmc.net/use/installer/) for Minecraft `26.1.2`.
+2. Drop these in your `mods/` folder:
+   - [Fabric API](https://modrinth.com/mod/fabric-api)
+   - [Baritone](https://github.com/cabaletta/baritone) (the `baritone-meteor` build)
+   - *(for the builder's open-placement mode)* [Litematica](https://modrinth.com/mod/litematica)
+   - `baritoneworker-<version>.jar` (see **Building** below, or grab a release)
+3. Launch with the Fabric profile.
 
 ## Building
 
@@ -27,7 +46,7 @@ The workers are independent; **run one at a time**.
 JAVA_HOME=/path/to/jdk-25 ./gradlew build
 ```
 
-The jar lands in `build/libs/baritoneworker-1.1.0.jar`. Drop it in your `mods/`
+The jar lands in `build/libs/baritoneworker-<version>.jar`. Drop it in your `mods/`
 folder alongside Baritone.
 
 ## Shared concepts
@@ -41,8 +60,9 @@ folder alongside Baritone.
   timer.
 - **Kept items** are never deposited (the miner keeps its pickaxe/food/torches,
   the lumber bot its axe/food/saplings). Armor and the off-hand are never touched.
-- Settings persist under `config/baritoneworker/` (`miner.properties`,
-  `lumber.properties`, `sorter.properties`, `mover.properties`, `sortscheme.json`).
+- Settings persist under `config/baritoneworker/` (`builder.properties`,
+  `miner.properties`, `lumber.properties`, `sorter.properties`, `mover.properties`,
+  `sortscheme.json`).
 
 ---
 
@@ -170,49 +190,81 @@ tag scheme the sorter uses (signs + `sortscheme.json`).
 
 ## Builder — `#builder`
 
-Builds a schematic with Baritone; when it runs out of blocks it resets the build
-home to the spot it left off, teleports to a supply room, refills on blocks (and
-food), teleports back, and resumes — the same home-dance the miner uses.
+Builds a [Litematica](https://modrinth.com/mod/litematica) schematic with Baritone,
+hands-free. When Baritone runs out of materials (it prints *"Missing materials …
+Pausing"*) the worker teleports to a supply room, refills with **only the blocks the
+build still needs**, teleports back, and resumes — until the schematic is finished,
+a `stopat` target is reached, or the supply runs out.
 
-Two ways to choose **what** to build:
+**Two build sources:**
+- the schematic currently **open in Litematica** (default), or
+- a schematic **file** from your `schematics/` folder (set with `file`, just like
+  Baritone's own `#build` — Litematica not required).
 
-- **A schematic file** from your `schematics/` folder (no Litematica needed),
-  just like Baritone's own `#build`:
-  `#builder ZMinus.litematic` — sets the file and starts in one go.
-  The schematic is anchored at **the block you're standing on** when you run the
-  command (captured before the teleport), so stand exactly where you want it to
-  begin. Supports `.litematic`, `.schematic`, and `.schem`.
-- **The placement currently open in Litematica** (requires the Litematica mod) —
-  leave the file unset (or `#builder file clear`) and it builds the open placement.
+### Setup
 
-A supply area is **optional**: with blocks already in your inventory it just
-builds (and stops when it runs dry); set an area and it restocks and resumes
-hands-free.
-
-Quick start (file build):
-1. Put `ZMinus.litematic` in your game dir's `schematics/` folder.
+1. Open/place your schematic in Litematica (or pick a file with `#builder file <name>`).
 2. `/sethome build` at the build site, `/sethome Home` by your supply room.
-3. *(optional, for hands-free)* stock the supply room, then `#sel 1` / `#sel 2`
-   around it and run `#builder area`.
-4. Stand where the schematic should start and run `#builder ZMinus.litematic`.
+3. Stock the supply room with the blocks the schematic needs (+ food).
+4. `#sel 1` / `#sel 2` around the supply room, then `#builder area`.
+5. *(optional, for an endless `buildRepeat`)* set a finish line: `#builder stopat here`.
+6. `#builder start`.
+
+### Commands
 
 | Command | Effect |
 |---------|--------|
 | `#builder start` / `stop` | run / halt |
-| `#builder <file>` | shortcut: set the schematic file and start (like `#build`) |
-| `#builder file <name\|clear>` | build a file from `schematics/` (`clear` = open Litematica placement) |
-| `#builder origin here\|<x> <y> <z>\|clear` | fixed corner for the file build (`clear` = auto: the block you stand on) |
-| `#builder area [clear]` | capture the current selection as the supply area (optional) |
+| `#builder area [clear]` | capture the current selection as the supply area |
 | `#builder food <n\|item>` | how much / which food to keep (default `64`) |
 | `#builder work <name>` / `home <name>` | build-site and base home names (default `build` / `Home`) |
 | `#builder litematic <index>` | which open Litematica placement to build (default `0`) |
-| `#builder stopat here\|<x> <y> <z>\|radius <n>\|clear` | stop when the player reaches this spot |
+| `#builder file <name\|clear>` | build a schematic file from `schematics/` (`clear` = open placement) |
+| `#builder origin here \| <x> <y> <z> \| clear` | fixed corner for a file build (`clear` = auto-anchor) |
+| `#builder stopat here \| <x> <y> <z> \| radius <n> \| clear` | stop when the player reaches this spot |
+| `#builder sethome on\|off` | move the `build` home to where it stops each trip (default **off**) |
+| `#builder builds <n\|infinite>` | `buildRepeat`: builds' worth of materials to carry per trip (default `1`) |
+| `#builder <file.litematic>` | shortcut: set the file **and** start, like `#build` |
 
-"Materials" are simply placeable blocks — the restock grabs whatever blocks are
-in the supply chests, so it works for any schematic without listing materials.
-It **only withdraws** (food + blocks) and never dumps your inventory. The
-`stopat` target ends an otherwise-endless `buildRepeat`; without it, a one-shot
-build stops on its own when the schematic is finished.
+### Recipe-aware restocking
+
+The builder reads the schematic and **only fetches the blocks it actually needs** — it
+won't grab block types the build doesn't use. It also subtracts what's **already placed
+in the world**, so a repeated or half-finished build only pulls what's still missing and
+never re-hauls materials it already used. (If it can't read the schematic for some reason
+it falls back to grabbing any block, and tells you.)
+
+### `buildRepeat` and `builds`
+
+Baritone's [`buildRepeat`](https://github.com/cabaletta/baritone/blob/master/SETTINGS.md)
+setting tiles a schematic over and over. By default each supply trip carries **one tile's**
+worth of blocks; raise it to make fewer round-trips:
+
+```text
+#builder builds 1          # one tile per trip (default)
+#builder builds 10         # ten tiles' worth of blocks per trip — fewer supply runs
+#builder builds infinite   # fill the bag with as many needed blocks as fit
+```
+
+A repeating build never finishes on its own — end it with `#builder stopat here` (run it
+standing where you want it to stop), or by setting Baritone's `buildRepeatCount`.
+
+### `sethome` — should it move the build home?
+
+Unlike the miner (whose tunnel face advances), a build site stays put, so by default the
+worker **keeps your existing `build` home** and just teleports back to it each trip. Turn
+this on only if your build crawls far from the start and you want the home to follow it:
+
+```text
+#builder sethome off        # default — keep your '/sethome build' spot
+#builder sethome on         # /delhome + /sethome 'build' wherever it stops each trip
+```
+
+> ⚠️ With `sethome on`, the home is re-set wherever Baritone happened to pause — often
+> mid-air on the structure. Leave it **off** unless you specifically need the home to
+> track a far-roaming build.
+
+The builder **only withdraws** (food + needed blocks) and never dumps your inventory.
 
 ---
 
@@ -235,3 +287,8 @@ src/client/java/com/luna0wl/baritoneworker/
     ├── mover/    # MoverWorker, MoverConfig, MoverCommand, MoverState
     └── builder/  # BuilderWorker, BuilderConfig, BuilderCommand, BuilderState
 ```
+
+## License
+
+[CC0-1.0](LICENSE) — public domain dedication. Do whatever you want with this code; no
+attribution required.

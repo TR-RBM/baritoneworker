@@ -76,6 +76,23 @@ public final class BuilderConfig {
     public int commandGapTicks = 15;
     public int chestPathTimeoutTicks = 1200;
 
+    /**
+     * Whether to delhome/sethome the work home at the current spot when materials run out.
+     * Off by default: the build site is world-anchored, so the bot keeps the user's existing
+     * {@code build} home instead of overwriting it with wherever it happened to pause (often
+     * mid-air on the structure). Turn on for builds that crawl far from the start point.
+     */
+    public boolean resetWorkHome = false;
+
+    /**
+     * How many repeated builds' worth of materials to carry per supply trip (for buildRepeat
+     * tiling). {@code 1} = one tile's bill of materials (the default); a higher number stocks
+     * that many tiles so the bot makes fewer trips; {@code 0} = infinite, i.e. fill the bag
+     * with whatever needed blocks fit. Ignored for non-repeating builds (those fetch exactly
+     * what's still missing).
+     */
+    public int materialBuilds = 1;
+
     /** Ticks the builder may sit idle (after having built) before we treat it as out of materials. */
     public int idleReissueTicks = 60;
     /** Ticks to wait for the builder to start after a (re)issue before concluding the build is done. */
@@ -137,6 +154,8 @@ public final class BuilderConfig {
         p.setProperty("clickDelayTicks", Integer.toString(clickDelayTicks));
         p.setProperty("commandGapTicks", Integer.toString(commandGapTicks));
         p.setProperty("chestPathTimeoutTicks", Integer.toString(chestPathTimeoutTicks));
+        p.setProperty("resetWorkHome", Boolean.toString(resetWorkHome));
+        p.setProperty("materialBuilds", Integer.toString(materialBuilds));
         p.setProperty("idleReissueTicks", Integer.toString(idleReissueTicks));
         p.setProperty("resumeGraceTicks", Integer.toString(resumeGraceTicks));
         p.setProperty("workPos", serializePos(workPos));
@@ -180,6 +199,8 @@ public final class BuilderConfig {
         clickDelayTicks = parseInt(p, "clickDelayTicks", clickDelayTicks);
         commandGapTicks = parseInt(p, "commandGapTicks", commandGapTicks);
         chestPathTimeoutTicks = parseInt(p, "chestPathTimeoutTicks", chestPathTimeoutTicks);
+        resetWorkHome = Boolean.parseBoolean(p.getProperty("resetWorkHome", Boolean.toString(resetWorkHome)));
+        materialBuilds = Math.max(0, parseInt(p, "materialBuilds", materialBuilds));
         idleReissueTicks = parseInt(p, "idleReissueTicks", idleReissueTicks);
         resumeGraceTicks = parseInt(p, "resumeGraceTicks", resumeGraceTicks);
         workPos = deserializePos(p.getProperty("workPos", ""));
