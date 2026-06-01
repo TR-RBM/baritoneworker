@@ -6,8 +6,6 @@ public enum BuilderState {
 
     GO_TO_WORK,
 
-    GO_TO_ORIGIN,
-
     BUILD,
 
     RESET_HOME,

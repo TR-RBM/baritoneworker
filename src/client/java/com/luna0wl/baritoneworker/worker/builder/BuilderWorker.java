@@ -52,6 +52,8 @@ public final class BuilderWorker {
     private final Set<BlockPos> visitedChests = new HashSet<>();
     private int rescans;
     private BlockPos buildAnchor;
+    private IStaticSchematic cachedSchematic;
+    private boolean resuming;
 
     private final BuilderConfig config;
     private final Teleporter teleporter = new Teleporter();
@@ -70,9 +72,6 @@ public final class BuilderWorker {
     private HomeStep homeStep = HomeStep.SETTLE;
     private int homeStepTicks;
 
-    private enum OriginStep { WALK, DELHOME, SETHOME }
-    private OriginStep originStep = OriginStep.WALK;
-    private int originStepTicks;
 
     private int goToWorkRetries;
 
@@ -122,6 +121,7 @@ public final class BuilderWorker {
         warnedNoSchematic = false;
         goToWorkRetries = 0;
         workPosKnownThisSession = false;
+        resuming = false;
 
         fileOrigin = (config.hasSchematicFile() && config.buildOriginPos == null)
                 ? mc.player.blockPosition()
@@ -186,7 +186,6 @@ public final class BuilderWorker {
 
         switch (state) {
             case GO_TO_WORK -> tickGoToWork(mc);
-            case GO_TO_ORIGIN -> tickGoToOrigin(mc);
             case BUILD -> tickBuild(mc);
             case RESET_HOME -> tickResetHome(mc);
             case GO_TO_HOME -> tickGoToHome(mc);
@@ -214,14 +213,6 @@ public final class BuilderWorker {
                     sendCommand(mc, "home " + config.workHome);
                 }
             }
-            case GO_TO_ORIGIN -> {
-                originStep = OriginStep.WALK;
-                originStepTicks = 0;
-                if (buildAnchor != null && !nearPos(mc, buildAnchor, config.skipTeleportRange)) {
-                    chat(mc, "Heading to the build origin to resume so it doesn't restart far away.");
-                    baritone.getCustomGoalProcess().setGoalAndPath(new GoalGetToBlock(buildAnchor));
-                }
-            }
             case BUILD -> {
                 becameActive = false;
                 idleTicks = 0;
@@ -232,6 +223,7 @@ public final class BuilderWorker {
                 cancelBaritone();
                 homeStep = HomeStep.SETTLE;
                 homeStepTicks = 0;
+                resuming = true;
             }
             case GO_TO_HOME -> {
                 if (alreadyAtBase(mc)) {
@@ -278,64 +270,8 @@ public final class BuilderWorker {
         if (!canVerify || landed) {
             rememberWorkPos(mc);
         }
-        if (isRepeating() && buildAnchor != null) {
-            chat(mc, "At the build site — resuming via the origin.");
-            setState(mc, BuilderState.GO_TO_ORIGIN);
-        } else {
-            chat(mc, "At the build site — building.");
-            setState(mc, BuilderState.BUILD);
-        }
-    }
-
-    private void tickGoToOrigin(Minecraft mc) {
-        if (buildAnchor == null) {
-            setState(mc, BuilderState.BUILD);
-            return;
-        }
-        int g = Math.max(1, config.commandGapTicks);
-        originStepTicks++;
-        switch (originStep) {
-            case WALK -> {
-                boolean here = nearPos(mc, buildAnchor, config.skipTeleportRange)
-                        || RotationUtils.reachable(baritone.getPlayerContext(), buildAnchor).isPresent();
-                if (here) {
-                    cancelBaritone();
-                    if (config.resetWorkHome) {
-                        chat(mc, "At the build origin — setting the build home here.");
-                        advanceOriginStep(OriginStep.DELHOME);
-                    } else {
-                        chat(mc, "At the build origin — building.");
-                        setState(mc, BuilderState.BUILD);
-                    }
-                } else if (originStepTicks > config.chestPathTimeoutTicks) {
-                    chat(mc, "§eCouldn't reach the build origin — building from here.");
-                    cancelBaritone();
-                    setState(mc, BuilderState.BUILD);
-                }
-            }
-            case DELHOME -> {
-                if (originStepTicks >= g) {
-                    sendCommand(mc, "delhome " + config.workHome);
-                    chat(mc, "§7/delhome " + config.workHome);
-                    advanceOriginStep(OriginStep.SETHOME);
-                }
-            }
-            case SETHOME -> {
-                if (originStepTicks >= g) {
-                    sendCommand(mc, "sethome " + config.workHome);
-                    rememberWorkPos(mc);
-                    BlockPos p = mc.player.blockPosition();
-                    chat(mc, "§7/sethome " + config.workHome + "§r at §e" + p.getX() + " " + p.getY() + " " + p.getZ()
-                            + "§r — will teleport back to the origin next time.");
-                    setState(mc, BuilderState.BUILD);
-                }
-            }
-        }
-    }
-
-    private void advanceOriginStep(OriginStep s) {
-        originStep = s;
-        originStepTicks = 0;
+        chat(mc, "At the build site — building.");
+        setState(mc, BuilderState.BUILD);
     }
 
     private boolean isRepeating() {
@@ -343,8 +279,17 @@ public final class BuilderWorker {
         return r != null && (r.getX() != 0 || r.getY() != 0 || r.getZ() != 0);
     }
 
-    private boolean nearPos(Minecraft mc, BlockPos pos, double range) {
-        return pos != null && near(mc, new int[]{pos.getX(), pos.getY(), pos.getZ()}, range);
+    private BlockPos frontTileOrigin(Minecraft mc) {
+        Vec3i rep = BaritoneAPI.getSettings().buildRepeat.value;
+        long len2 = (long) rep.getX() * rep.getX() + (long) rep.getY() * rep.getY() + (long) rep.getZ() * rep.getZ();
+        if (len2 == 0 || buildAnchor == null) return buildAnchor;
+        BlockPos pos = mc.player.blockPosition();
+        long dot = (long) (pos.getX() - buildAnchor.getX()) * rep.getX()
+                + (long) (pos.getY() - buildAnchor.getY()) * rep.getY()
+                + (long) (pos.getZ() - buildAnchor.getZ()) * rep.getZ();
+        int i = (int) Math.floor((double) dot / len2);
+        if (i < 0) i = 0;
+        return buildAnchor.offset(rep.getX() * i, rep.getY() * i, rep.getZ() * i);
     }
 
     private void tickBuild(Minecraft mc) {
@@ -418,7 +363,7 @@ public final class BuilderWorker {
     private void tickResetHome(Minecraft mc) {
         int g = Math.max(1, config.commandGapTicks);
 
-        if (!config.resetWorkHome || isRepeating()) {
+        if (!config.resetWorkHome) {
             if (ticksInState >= g) {
                 chat(mc, "Keeping build home — heading to base.");
                 setState(mc, BuilderState.GO_TO_HOME);
@@ -472,6 +417,11 @@ public final class BuilderWorker {
         if (baritone == null) return;
         if (config.hasSchematicFile()) {
             issueFileBuild(mc);
+            return;
+        }
+        if (resuming && isRepeating() && cachedSchematic != null && buildAnchor != null) {
+            BlockPos fo = frontTileOrigin(mc);
+            baritone.getBuilderProcess().build("resume", cachedSchematic, fo);
         } else {
             baritone.getBuilderProcess().buildOpenLitematic(config.litematicIndex);
         }
@@ -557,6 +507,7 @@ public final class BuilderWorker {
             return;
         }
         IStaticSchematic sch = ref.schematic();
+        cachedSchematic = sch;
         buildAnchor = ref.origin();
         Map<Item, Integer> counts = new LinkedHashMap<>();
         long total = 0;
