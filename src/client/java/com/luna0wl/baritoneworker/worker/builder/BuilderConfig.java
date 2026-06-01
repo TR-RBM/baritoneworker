@@ -88,11 +88,11 @@ public final class BuilderConfig {
     public boolean resetWorkHome = false;
 
     /**
-     * How many repeated builds' worth of materials to carry per supply trip (for buildRepeat
-     * tiling). {@code 1} = one tile's bill of materials (the default); a higher number stocks
-     * that many tiles so the bot makes fewer trips; {@code 0} = infinite, i.e. fill the bag
-     * with whatever needed blocks fit. Ignored for non-repeating builds (those fetch exactly
-     * what's still missing).
+     * How many builds' worth of materials to carry per supply trip. {@code 1} (default) = one
+     * full bill of materials for the schematic; a higher number stocks that many copies (handy
+     * for buildRepeat tiling, so the bot makes fewer trips); {@code 0} = infinite, i.e. fill the
+     * bag with as many of the needed blocks as fit. Only ever pulls block types the schematic
+     * actually uses — never quantities of a type beyond {@code count × materialBuilds}.
      */
     public int materialBuilds = 1;
 

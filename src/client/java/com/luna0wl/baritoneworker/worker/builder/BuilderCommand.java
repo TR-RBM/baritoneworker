@@ -158,10 +158,10 @@ public final class BuilderCommand extends Command {
                 + "' where it stops each trip." : "§coff§r — keeps your existing '" + config.workHome + "' home."));
     }
 
-    /** {@code #builder builds <n|infinite>} — how many repeated builds' worth of materials to carry per trip. */
+    /** {@code #builder builds <n|infinite>} — how many builds' worth of materials to carry per trip. */
     private void doBuilds(IArgConsumer args) {
         if (!args.hasAny()) {
-            logDirect("builds-per-trip = §e" + buildsStr() + "§r (materials carried per supply trip for buildRepeat).");
+            logDirect("builds-per-trip = §e" + buildsStr() + "§r (full bills of materials carried per supply trip).");
             logDirect("Usage: §e#builder builds <n|infinite>");
             return;
         }
@@ -325,7 +325,7 @@ public final class BuilderCommand extends Command {
                 "> builder origin here | <x> <y> <z> | clear - fixed corner for the file build (clear = auto)",
                 "> builder stopat here | <x> <y> <z> | radius <n> | clear - stop when this spot is reached",
                 "> builder sethome on|off - move the 'build' home to where it stops each trip (default off)",
-                "> builder builds <n|infinite> - buildRepeat: materials to carry per supply trip (default 1)",
+                "> builder builds <n|infinite> - builds' worth of materials to carry per supply trip (default 1)",
                 "",
                 "Two build sources: the schematic open in Litematica (default), or a schematic FILE",
                 "from your schematics/ folder (set with 'file', just like Baritone's own #build —",

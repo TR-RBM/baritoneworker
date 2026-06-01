@@ -66,20 +66,14 @@ public final class BuilderWorker {
     /** Fallback "materials" definition when we couldn't read the schematic: any placeable block. */
     private static final Predicate<Item> ANY_BLOCK = item -> item instanceof BlockItem;
 
-    /** Don't world-diff schematics bigger than this (avoids a multi-second freeze on giant builds). */
-    private static final long MAX_DIFF_VOLUME = 4_000_000L;
-
     /**
-     * Blocks the build still needs → how many are left to place (the schematic's counts with
-     * everything already placed in the world subtracted). {@code null} means we couldn't read
-     * the schematic, in which case we fall back to {@link #ANY_BLOCK}. Refreshed against the
-     * live world each time we run out, so repeat / partially-finished builds only ever fetch
-     * what's actually still missing.
+     * The schematic's bill of materials: each block TYPE the build uses → how many the
+     * schematic contains (one build's worth). We carry up to {@code count × materialBuilds}
+     * of each. {@code null} means we couldn't read the schematic, in which case we fall back
+     * to {@link #ANY_BLOCK} (restock any block).
      */
     private Map<Item, Integer> required;
     private boolean warnedNoSchematic;
-    /** True when the current build tiles via Baritone's buildRepeat (set by refreshRequired). */
-    private boolean repeating;
 
     private final BuilderConfig config;
     private final Teleporter teleporter = new Teleporter();
@@ -517,14 +511,13 @@ public final class BuilderWorker {
         return required != null ? required.containsKey(item) : ANY_BLOCK.test(item);
     }
 
-    /** Should we pull more of this item, given how many the build has left to place? */
+    /** Should we pull more of this item? Carry up to {@code perBuild × materialBuilds} of each needed type. */
     private boolean needMore(Inventory inv, Item item) {
         if (required == null) return true; // unknown recipe → top off the bag (old behavior)
         int perBuild = required.getOrDefault(item, 0);
         if (perBuild <= 0) return false;
-        if (repeating && config.materialBuilds <= 0) return true; // infinite → fill the bag
-        int target = repeating ? perBuild * config.materialBuilds : perBuild;
-        return ContainerService.countItem(inv, item) < target;
+        if (config.materialBuilds <= 0) return true; // 0 = infinite: fill the bag with needed types
+        return ContainerService.countItem(inv, item) < perBuild * config.materialBuilds;
     }
 
     /** True while the build still needs a block type we don't yet carry enough of. */
@@ -547,11 +540,14 @@ public final class BuilderWorker {
     }
 
     /**
-     * Recompute {@link #required}: read the build's schematic and, cell by cell, count only
-     * the blocks not already placed correctly in the live world — so a repeat or partially
-     * finished build only asks for what's genuinely still missing, and never re-fetches
-     * blocks it already used. Call this while standing at the build (chunks loaded). On any
-     * failure leaves {@code required = null}, falling back to the old any-block behavior.
+     * Recompute {@link #required}: read the build's schematic and tally a full bill of
+     * materials — how many of each block the schematic contains. This is the set of block
+     * TYPES the build uses and the per-build count of each; how much we actually carry is
+     * {@code count × materialBuilds} (see {@link #needMore}). We deliberately do NOT subtract
+     * what's already placed: Baritone skips already-built blocks itself when it builds, so a
+     * full bill just means we may carry some spares — whereas subtracting against the live
+     * world proved unreliable (it under-counted and left the bot fetching far too little).
+     * On failure leaves {@code required = null}, falling back to the old any-block behavior.
      */
     private void refreshRequired(Minecraft mc) {
         SchematicRef ref = loadSchematic(mc);
@@ -565,17 +561,8 @@ public final class BuilderWorker {
             return;
         }
         IStaticSchematic sch = ref.schematic();
-        BlockPos origin = ref.origin();
-        long volume = (long) sch.widthX() * sch.heightY() * sch.lengthZ();
-        // With buildrepeat the schematic tiles past the base origin, so a one-tile world diff
-        // would wrongly read "all placed" once the base tile is done. When repeating, skip the
-        // diff and count a full per-tile bill of materials instead — completion is then decided
-        // by Baritone clearing the schematic (see tickBuild), not by this list emptying.
-        Vec3i repeat = BaritoneAPI.getSettings().buildRepeat.value;
-        repeating = repeat != null && (repeat.getX() != 0 || repeat.getY() != 0 || repeat.getZ() != 0);
-        boolean diff = !repeating && mc.level != null && origin != null && volume <= MAX_DIFF_VOLUME;
         Map<Item, Integer> counts = new LinkedHashMap<>();
-        BlockPos.MutableBlockPos wp = new BlockPos.MutableBlockPos();
+        long total = 0;
         for (int x = 0; x < sch.widthX(); x++) {
             for (int y = 0; y < sch.heightY(); y++) {
                 for (int z = 0; z < sch.lengthZ(); z++) {
@@ -583,20 +570,18 @@ public final class BuilderWorker {
                     if (desired == null || desired.isAir()) continue;
                     Item item = desired.getBlock().asItem();
                     if (item == Items.AIR) continue;
-                    if (diff) {
-                        wp.set(origin.getX() + x, origin.getY() + y, origin.getZ() + z);
-                        if (mc.level.isLoaded(wp)) {
-                            BlockState cur = mc.level.getBlockState(wp);
-                            // Right block already there → already built, no longer needed.
-                            if (!cur.isAir() && cur.getBlock().asItem() == item) continue;
-                        }
-                    }
                     counts.merge(item, 1, Integer::sum);
+                    total++;
                 }
             }
         }
+        boolean firstRead = required == null || required.isEmpty();
         required = counts;
         warnedNoSchematic = false;
+        if (firstRead && !counts.isEmpty()) {
+            chat(mc, "Build needs §e" + total + "§r block(s) across §e" + counts.size()
+                    + "§r type(s): " + neededSummary() + ".");
+        }
     }
 
     /** Load the build's schematic and its world origin — a file build, or the open Litematica placement. */
@@ -712,11 +697,10 @@ public final class BuilderWorker {
     }
 
     /**
-     * Next supply slot to pull: food up to target, then only blocks the build still
-     * needs — and only up to how many are left to place. We never pull a block type the
-     * schematic doesn't use, nor more of a type than {@link #required} still calls for
-     * (which already has the placed/used blocks subtracted), so a repeat or nearly-done
-     * build won't haul materials it no longer needs.
+     * Next supply slot to pull: food up to target, then only blocks the build uses — up to
+     * {@code perBuild × materialBuilds} of each type (see {@link #needMore}). We never pull a
+     * block type the schematic doesn't use, so it won't haul junk, but it will fill up on the
+     * blocks the build actually needs.
      */
     private int nextSupplyWithdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
         Inventory inv = mc.player.getInventory();
