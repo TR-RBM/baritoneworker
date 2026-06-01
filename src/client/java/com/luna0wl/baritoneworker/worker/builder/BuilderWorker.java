@@ -101,6 +101,12 @@ public final class BuilderWorker {
     private HomeStep homeStep = HomeStep.SETTLE;
     private int homeStepTicks;
 
+    // --- GO_TO_WORK teleport verification ---
+    /** Retries used this trip when the /home build teleport didn't land at the build home. */
+    private int goToWorkRetries;
+    /** Have we learned the real build-home position this session yet (so we can verify landings)? */
+    private boolean workPosKnownThisSession;
+
     // --- chest servicing sub-state (withdraw only — the builder hoards, never dumps) ---
     private enum ChestStep { PATH, OPEN, WITHDRAW, CLOSE }
     private final List<BlockPos> chestQueue = new ArrayList<>();
@@ -146,6 +152,8 @@ public final class BuilderWorker {
         baritone = null;
         required = null;
         warnedNoSchematic = false;
+        goToWorkRetries = 0;
+        workPosKnownThisSession = false;
         // For a file build with no explicit origin, anchor the schematic at the block
         // we're standing on RIGHT NOW — captured before GO_TO_WORK teleports us away.
         fileOrigin = (config.hasSchematicFile() && config.buildOriginPos == null)
@@ -235,8 +243,10 @@ public final class BuilderWorker {
     private void onEnter(Minecraft mc, BuilderState s) {
         switch (s) {
             case GO_TO_WORK -> {
+                goToWorkRetries = 0;
                 if (near(mc, config.workPos, config.skipTeleportRange)) {
                     chat(mc, "Already at the build site — building.");
+                    cancelBaritone();
                     setState(mc, BuilderState.BUILD);
                 } else {
                     teleporter.begin(mc);
@@ -274,11 +284,38 @@ public final class BuilderWorker {
     }
 
     private void tickGoToWork(Minecraft mc) {
-        if (teleportArrived(mc)) {
-            rememberWorkPos(mc);
-            chat(mc, "At the build site — building.");
-            setState(mc, BuilderState.BUILD);
+        if (!teleportArrived(mc)) return;
+
+        // Verify we actually landed at the build home. /home has a warm-up, and if it gets
+        // mis-detected as arrived (or the warm-up teleport never fires) we'd otherwise be
+        // standing at base — Baritone would then path from base toward the distant build
+        // origin and "walk off into the distance". If we know where the build home is this
+        // session and we're nowhere near it, the teleport didn't take: retry /home build.
+        boolean canVerify = workPosKnownThisSession && config.workPos != null;
+        boolean landed = canVerify && near(mc, config.workPos, Math.max(config.skipTeleportRange, 4.0));
+        if (canVerify && !landed) {
+            if (goToWorkRetries < Math.max(0, config.teleportRetries)) {
+                goToWorkRetries++;
+                chat(mc, "§eTeleport didn't land at the build home — retrying §ehome " + config.workHome
+                        + "§e (" + goToWorkRetries + "/" + config.teleportRetries + ").");
+                teleporter.begin(mc);
+                sendCommand(mc, "home " + config.workHome);
+                return;
+            }
+            chat(mc, "§cCouldn't land at the build home after " + config.teleportRetries
+                    + " tries — stopping so I don't wander off. Check that §e/home " + config.workHome
+                    + "§c works and points at the build.");
+            stop(mc);
+            return;
         }
+
+        goToWorkRetries = 0;
+        cancelBaritone();                 // drop any leftover path so we build, not walk back
+        if (!canVerify || landed) {
+            rememberWorkPos(mc);          // only trust the spot when it actually checks out (or it's the first time)
+        }
+        chat(mc, "At the build site — building.");
+        setState(mc, BuilderState.BUILD);
     }
 
     private void tickBuild(Minecraft mc) {
@@ -747,6 +784,7 @@ public final class BuilderWorker {
 
     private void rememberWorkPos(Minecraft mc) {
         config.workPos = posOf(mc);
+        workPosKnownThisSession = true;
         config.save();
     }
 

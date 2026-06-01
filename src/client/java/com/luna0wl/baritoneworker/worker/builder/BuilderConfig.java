@@ -76,6 +76,9 @@ public final class BuilderConfig {
     public int commandGapTicks = 15;
     public int chestPathTimeoutTicks = 1200;
 
+    /** How many times to re-send {@code /home <workHome>} if the teleport back didn't land at the build. */
+    public int teleportRetries = 3;
+
     /**
      * Whether to delhome/sethome the work home at the current spot when materials run out.
      * Off by default: the build site is world-anchored, so the bot keeps the user's existing
@@ -154,6 +157,7 @@ public final class BuilderConfig {
         p.setProperty("clickDelayTicks", Integer.toString(clickDelayTicks));
         p.setProperty("commandGapTicks", Integer.toString(commandGapTicks));
         p.setProperty("chestPathTimeoutTicks", Integer.toString(chestPathTimeoutTicks));
+        p.setProperty("teleportRetries", Integer.toString(teleportRetries));
         p.setProperty("resetWorkHome", Boolean.toString(resetWorkHome));
         p.setProperty("materialBuilds", Integer.toString(materialBuilds));
         p.setProperty("idleReissueTicks", Integer.toString(idleReissueTicks));
@@ -199,6 +203,7 @@ public final class BuilderConfig {
         clickDelayTicks = parseInt(p, "clickDelayTicks", clickDelayTicks);
         commandGapTicks = parseInt(p, "commandGapTicks", commandGapTicks);
         chestPathTimeoutTicks = parseInt(p, "chestPathTimeoutTicks", chestPathTimeoutTicks);
+        teleportRetries = Math.max(0, parseInt(p, "teleportRetries", teleportRetries));
         resetWorkHome = Boolean.parseBoolean(p.getProperty("resetWorkHome", Boolean.toString(resetWorkHome)));
         materialBuilds = Math.max(0, parseInt(p, "materialBuilds", materialBuilds));
         idleReissueTicks = parseInt(p, "idleReissueTicks", idleReissueTicks);
