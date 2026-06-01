@@ -96,6 +96,11 @@ public final class BuilderWorker {
     /** Anchor for a file build, captured once per session so re-issues stay put (null = none yet). */
     private BlockPos fileOrigin;
 
+    // --- RESET_HOME sub-state (only used when config.resetWorkHome) ---
+    private enum HomeStep { SETTLE, DELHOME, SETHOME }
+    private HomeStep homeStep = HomeStep.SETTLE;
+    private int homeStepTicks;
+
     // --- chest servicing sub-state (withdraw only — the builder hoards, never dumps) ---
     private enum ChestStep { PATH, OPEN, WITHDRAW, CLOSE }
     private final List<BlockPos> chestQueue = new ArrayList<>();
@@ -244,7 +249,11 @@ public final class BuilderWorker {
                 nudged = false;
                 issueBuild(mc);
             }
-            case RESET_HOME -> cancelBaritone();
+            case RESET_HOME -> {
+                cancelBaritone();
+                homeStep = HomeStep.SETTLE;
+                homeStepTicks = 0;
+            }
             case GO_TO_HOME -> {
                 if (alreadyAtBase(mc)) {
                     chat(mc, "Already at base — servicing chests without teleport.");
@@ -353,12 +362,9 @@ public final class BuilderWorker {
 
     private void tickResetHome(Minecraft mc) {
         int g = Math.max(1, config.commandGapTicks);
-        // The build site is world-anchored (the Litematica placement / file origin don't
-        // move), so unlike the miner we must NOT move the work home. When materials run
-        // out the bot is often paused mid-air on scaffolding or atop the structure;
-        // re-running /sethome there would overwrite the user's correct "build" home with
-        // a junk spot — which is exactly the wrong-backport bug. By default we keep the
-        // existing home and just settle a moment before heading to base.
+
+        // Default: the build site is world-anchored, so we DON'T move the work home — just
+        // settle a moment, then head to base and teleport back to the existing 'build' home.
         if (!config.resetWorkHome) {
             if (ticksInState >= g) {
                 chat(mc, "Keeping build home — heading to base.");
@@ -366,15 +372,43 @@ public final class BuilderWorker {
             }
             return;
         }
-        if (ticksInState == g) {
-            sendCommand(mc, "delhome " + config.workHome);
-        } else if (ticksInState == 2 * g) {
-            sendCommand(mc, "sethome " + config.workHome);
-            rememberWorkPos(mc); // the new build home is right here, where we left off
-        } else if (ticksInState >= 3 * g) {
-            chat(mc, "Build home reset to current spot — heading to base.");
-            setState(mc, BuilderState.GO_TO_HOME);
+
+        // sethome-on-leaving is ON: move the 'build' home to where we stopped. Out of
+        // materials Baritone often pauses the bot mid-air on the structure, so wait until
+        // we're settled on the ground before capturing the spot (else /sethome lands on a
+        // junk position we'd then teleport back into). Each /delhome and /sethome is spaced
+        // and echoed with coordinates so it's visible whether it actually fired.
+        homeStepTicks++;
+        switch (homeStep) {
+            case SETTLE -> {
+                boolean grounded = mc.player.onGround() && homeStepTicks >= g;
+                if (grounded || homeStepTicks > Math.max(g, 100)) { // ground, or give up waiting
+                    sendCommand(mc, "delhome " + config.workHome);
+                    chat(mc, "§7/delhome " + config.workHome);
+                    advanceHomeStep(HomeStep.DELHOME);
+                }
+            }
+            case DELHOME -> {
+                if (homeStepTicks >= g) {
+                    sendCommand(mc, "sethome " + config.workHome);
+                    rememberWorkPos(mc); // the new build home is right here, where we left off
+                    BlockPos p = mc.player.blockPosition();
+                    chat(mc, "§7/sethome " + config.workHome + "§r at §e" + p.getX() + " " + p.getY() + " " + p.getZ()
+                            + "§r — will teleport back here to resume.");
+                    advanceHomeStep(HomeStep.SETHOME);
+                }
+            }
+            case SETHOME -> {
+                if (homeStepTicks >= g) {
+                    setState(mc, BuilderState.GO_TO_HOME);
+                }
+            }
         }
+    }
+
+    private void advanceHomeStep(HomeStep s) {
+        homeStep = s;
+        homeStepTicks = 0;
     }
 
     private void tickGoToHome(Minecraft mc) {
