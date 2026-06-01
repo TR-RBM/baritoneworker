@@ -54,6 +54,8 @@ public final class BuilderWorker {
     private BlockPos buildAnchor;
     private IStaticSchematic cachedSchematic;
     private boolean resuming;
+    private Boolean savedAllowBreak;
+    private double maxForward;
 
     private final BuilderConfig config;
     private final Teleporter teleporter = new Teleporter();
@@ -122,6 +124,7 @@ public final class BuilderWorker {
         goToWorkRetries = 0;
         workPosKnownThisSession = false;
         resuming = false;
+        restoreAllowBreak();
 
         fileOrigin = (config.hasSchematicFile() && config.buildOriginPos == null)
                 ? mc.player.blockPosition()
@@ -159,12 +162,20 @@ public final class BuilderWorker {
 
     public void stop(Minecraft mc) {
         cancelBaritone();
+        restoreAllowBreak();
         if (mc.player != null && mc.player.containerMenu != mc.player.inventoryMenu) {
             mc.player.closeContainer();
         }
         state = BuilderState.IDLE;
         ticksInState = 0;
         chat(mc, "§cStopped.");
+    }
+
+    private void restoreAllowBreak() {
+        if (savedAllowBreak != null) {
+            BaritoneAPI.getSettings().allowBreak.value = savedAllowBreak;
+            savedAllowBreak = null;
+        }
     }
 
     public void tick(Minecraft mc) {
@@ -217,6 +228,7 @@ public final class BuilderWorker {
                 becameActive = false;
                 idleTicks = 0;
                 nudged = false;
+                maxForward = projAlongRepeat(mc);
                 issueBuild(mc);
             }
             case RESET_HOME -> {
@@ -292,6 +304,18 @@ public final class BuilderWorker {
         return buildAnchor.offset(rep.getX() * i, rep.getY() * i, rep.getZ() * i);
     }
 
+    private double projAlongRepeat(Minecraft mc) {
+        Vec3i rep = BaritoneAPI.getSettings().buildRepeat.value;
+        if (rep == null || buildAnchor == null) return 0;
+        double len = Math.sqrt((double) rep.getX() * rep.getX() + (double) rep.getY() * rep.getY() + (double) rep.getZ() * rep.getZ());
+        if (len == 0) return 0;
+        BlockPos p = mc.player.blockPosition();
+        double dot = (p.getX() - buildAnchor.getX()) * (double) rep.getX()
+                + (p.getY() - buildAnchor.getY()) * (double) rep.getY()
+                + (p.getZ() - buildAnchor.getZ()) * (double) rep.getZ();
+        return dot / len;
+    }
+
     private void tickBuild(Minecraft mc) {
 
         if (config.hasStop() && near(mc, config.stopPos, config.stopRadius)) {
@@ -322,6 +346,23 @@ public final class BuilderWorker {
             cancelBaritone();
             setState(mc, BuilderState.RESET_HOME);
             return;
+        }
+
+        if (config.maxStrayBlocks > 0 && isRepeating() && buildAnchor != null) {
+            double proj = projAlongRepeat(mc);
+            if (proj > maxForward) {
+                maxForward = proj;
+            } else if (proj < maxForward - config.maxStrayBlocks) {
+                chat(mc, "§eWandered back ~" + (int) (maxForward - proj) + " blocks — re-anchoring the build here.");
+                cancelBaritone();
+                maxForward = proj;
+                if (cachedSchematic != null) {
+                    baritone.getBuilderProcess().build("resume", cachedSchematic, frontTileOrigin(mc));
+                } else {
+                    issueBuild(mc);
+                }
+                return;
+            }
         }
 
         boolean active = baritone.getBuilderProcess().isActive() || baritone.getPathingBehavior().isPathing();
@@ -569,6 +610,10 @@ public final class BuilderWorker {
         actionClicks = 0;
         visitedChests.clear();
         rescans = 0;
+        if (savedAllowBreak == null) {
+            savedAllowBreak = BaritoneAPI.getSettings().allowBreak.value;
+        }
+        BaritoneAPI.getSettings().allowBreak.value = false;
         blocksBeforeService = ContainerService.countMatching(mc.player.getInventory(), this::isMaterial);
         chestQueue.addAll(ContainerService.scanChests(mc.level, config.chestBoxes, mc.player.blockPosition()));
         if (chestQueue.isEmpty()) {
@@ -694,6 +739,7 @@ public final class BuilderWorker {
         } else {
             chat(mc, "Restocked (blocks=" + blocks + ", food=" + food + "). Back to building.");
         }
+        restoreAllowBreak();
         setState(mc, BuilderState.GO_TO_WORK);
     }
 

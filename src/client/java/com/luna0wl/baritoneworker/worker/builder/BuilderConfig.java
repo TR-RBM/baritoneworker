@@ -55,6 +55,8 @@ public final class BuilderConfig {
 
     public int materialBuilds = 1;
 
+    public int maxStrayBlocks = 20;
+
     public int idleReissueTicks = 60;
 
     public int resumeGraceTicks = 120;
@@ -112,6 +114,7 @@ public final class BuilderConfig {
         p.setProperty("teleportRetries", Integer.toString(teleportRetries));
         p.setProperty("resetWorkHome", Boolean.toString(resetWorkHome));
         p.setProperty("materialBuilds", Integer.toString(materialBuilds));
+        p.setProperty("maxStrayBlocks", Integer.toString(maxStrayBlocks));
         p.setProperty("idleReissueTicks", Integer.toString(idleReissueTicks));
         p.setProperty("resumeGraceTicks", Integer.toString(resumeGraceTicks));
         p.setProperty("workPos", serializePos(workPos));
@@ -158,6 +161,7 @@ public final class BuilderConfig {
         teleportRetries = Math.max(0, parseInt(p, "teleportRetries", teleportRetries));
         resetWorkHome = Boolean.parseBoolean(p.getProperty("resetWorkHome", Boolean.toString(resetWorkHome)));
         materialBuilds = Math.max(0, parseInt(p, "materialBuilds", materialBuilds));
+        maxStrayBlocks = Math.max(0, parseInt(p, "maxStrayBlocks", maxStrayBlocks));
         idleReissueTicks = parseInt(p, "idleReissueTicks", idleReissueTicks);
         resumeGraceTicks = parseInt(p, "resumeGraceTicks", resumeGraceTicks);
         workPos = deserializePos(p.getProperty("workPos", ""));
