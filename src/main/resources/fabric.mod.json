@@ -22,13 +22,6 @@
 			"com.luna0wl.baritoneworker.client.BaritoneWorkerClient"
 		]
 	},
-	"mixins": [
-		"baritoneworker.mixins.json",
-		{
-			"config": "baritoneworker.client.mixins.json",
-			"environment": "client"
-		}
-	],
 	"depends": {
 		"fabricloader": ">=0.19.2",
 		"minecraft": "~26.1.2",
