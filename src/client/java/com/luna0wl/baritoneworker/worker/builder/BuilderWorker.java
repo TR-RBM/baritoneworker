@@ -230,6 +230,24 @@ public final class BuilderWorker {
             return;
         }
 
+        // Out of materials: Baritone prints "Missing materials ... Pausing" and sets the
+        // builder paused. It does NOT clear the schematic, so isActive() keeps returning
+        // true — the build just sits there doing nothing. Detect the pause explicitly and
+        // run the restock loop (reset build home → base → refill → resume).
+        if (baritone.getBuilderProcess().isPaused()) {
+            int blocks = ContainerService.countMatching(mc.player.getInventory(), MATERIAL);
+            if (!config.hasArea()) {
+                chat(mc, "§eOut of materials (blocks=" + blocks + ") and no supply area set — "
+                        + "resume manually after refilling, or set an area with §e#sel 1§e/§e#sel 2§e then §e#builder area§e. Stopping.");
+                stop(mc);
+                return;
+            }
+            chat(mc, "Out of materials (blocks=" + blocks + ") — Baritone paused, restocking.");
+            cancelBaritone();
+            setState(mc, BuilderState.RESET_HOME);
+            return;
+        }
+
         boolean active = baritone.getBuilderProcess().isActive() || baritone.getPathingBehavior().isPathing();
         if (active) {
             becameActive = true;
