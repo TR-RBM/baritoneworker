@@ -32,10 +32,12 @@ import java.io.File;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -47,7 +49,7 @@ public final class BuilderWorker {
 
     private Map<Item, Integer> required;
     private boolean warnedNoSchematic;
-    private boolean materialFallback;
+    private final Set<BlockPos> visitedChests = new HashSet<>();
 
     private final BuilderConfig config;
     private final Teleporter teleporter = new Teleporter();
@@ -533,7 +535,7 @@ public final class BuilderWorker {
         chestStep = ChestStep.PATH;
         ticksInStep = 0;
         actionClicks = 0;
-        materialFallback = false;
+        visitedChests.clear();
         blocksBeforeService = ContainerService.countMatching(mc.player.getInventory(), this::isMaterial);
         chestQueue.addAll(ContainerService.scanChests(mc.level, config.chestBoxes, mc.player.blockPosition()));
         if (chestQueue.isEmpty()) {
@@ -552,6 +554,10 @@ public final class BuilderWorker {
             return;
         }
         BlockPos chest = chestQueue.get(chestIndex);
+        if (visitedChests.contains(chest)) {
+            nextChest();
+            return;
+        }
 
         switch (chestStep) {
             case PATH -> {
@@ -614,10 +620,8 @@ public final class BuilderWorker {
             if (s != -1) return s;
         }
         if (ContainerService.freeSlots(inv) > 0) {
-            Predicate<Item> want = materialFallback
-                    ? ANY_BLOCK
-                    : item -> isMaterial(item) && needMore(inv, item);
-            return ContainerService.nextWithdrawSlotMatching(menu, want);
+            return ContainerService.nextWithdrawSlotMatching(menu,
+                    item -> isMaterial(item) && needMore(inv, item));
         }
         return -1;
     }
@@ -626,24 +630,16 @@ public final class BuilderWorker {
         Inventory inv = mc.player.getInventory();
         if (config.targetFood - ContainerService.countItem(inv, config.foodItem) > 0) return true;
         if (ContainerService.freeSlots(inv) <= 0) return false;
-        return materialFallback || stillNeedMaterials(inv);
+        return stillNeedMaterials(inv);
     }
 
     private void finishService(Minecraft mc) {
         Inventory inv = mc.player.getInventory();
-        Predicate<Item> counted = materialFallback ? ANY_BLOCK : this::isMaterial;
-        int blocks = ContainerService.countMatching(inv, counted);
+        int blocks = ContainerService.countMatching(inv, this::isMaterial);
         int food = ContainerService.countItem(inv, config.foodItem);
         if (blocks == 0) {
-            if (!materialFallback && required != null) {
-                materialFallback = true;
-                chestIndex = 0;
-                setStep(ChestStep.PATH);
-                chat(mc, "§eNone of the build's listed blocks were in the chests (looking for: " + neededSummary()
-                        + ") — taking whatever blocks are there instead.");
-                return;
-            }
-            chat(mc, "§cThe supply chests have no blocks at all — stopping.");
+            chat(mc, "§cChecked " + visitedChests.size() + " chest(s) but found none of the blocks the build needs ("
+                    + neededSummary() + ") — stopping. Make sure those blocks are in the supply chests.");
             stop(mc);
             return;
         }
@@ -656,6 +652,7 @@ public final class BuilderWorker {
     }
 
     private void nextChest() {
+        if (chestIndex < chestQueue.size()) visitedChests.add(chestQueue.get(chestIndex));
         chestIndex++;
         setStep(ChestStep.PATH);
     }
