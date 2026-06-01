@@ -16,59 +16,32 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
-/**
- * Settings for the builder worker, plus the captured supply-chest area.
- * Persisted to {@code config/baritoneworker/builder.properties}.
- *
- * <p>The builder can build either the schematic currently open in Litematica
- * (default) or a schematic file from the {@code schematics/} folder — set
- * {@link #schematicFile} for the latter, just like Baritone's own {@code #build}.
- * "Materials" are simply placeable blocks: when it runs out, it restocks every
- * block it can find in the supply chests.
- */
 public final class BuilderConfig {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritoneworker/builder");
 
-    /** Essentials-style home at the build site (default {@code build}). */
     public String workHome = "build";
-    /** Essentials-style home where the supply chests live (default {@code Home}). */
+
     public String baseHome = "Home";
 
-    /** Which food to keep stocked (for a separate auto-eat mod). */
     public Item foodItem = Items.BAKED_POTATO;
     public int targetFood = 64;
 
-    /** Which open Litematica placement to build (index, default 0 = the primary one). */
     public int litematicIndex = 0;
 
-    /**
-     * Schematic file to build from the {@code schematics/} folder (e.g.
-     * {@code house.litematic}). When set, the worker builds this file like the
-     * normal {@code #build} command; when blank it builds the open Litematica
-     * placement instead.
-     */
     public String schematicFile = "";
-    /**
-     * Fixed origin (corner) for a file build, like the optional coords of
-     * {@code #build <file> <x> <y> <z>}. When null the worker anchors the
-     * schematic at the build site the first time it starts placing.
-     */
+
     public int[] buildOriginPos;
 
-    // --- optional coordinate stop ---
-    /** When set, the worker stops once the player reaches within {@link #stopRadius} of this. */
     public int[] stopPos;
     public double stopRadius = 3.0;
 
-    // --- teleport handling (same warm-up dance as the miner) ---
     public int teleportTimeoutTicks = 200;
     public int teleportSettleTicks = 25;
     public double teleportMoveThreshold = 2.0;
     public double skipTeleportRange = 6.0;
     public int chestAreaMargin = 8;
 
-    /** Cached landing spots so we can skip redundant teleports (null = unknown). */
     public int[] workPos;
     public int[] homePos;
 
@@ -76,39 +49,21 @@ public final class BuilderConfig {
     public int commandGapTicks = 15;
     public int chestPathTimeoutTicks = 1200;
 
-    /** How many times to re-send {@code /home <workHome>} if the teleport back didn't land at the build. */
     public int teleportRetries = 3;
 
-    /**
-     * Whether to delhome/sethome the work home at the current spot when materials run out.
-     * Off by default: the build site is world-anchored, so the bot keeps the user's existing
-     * {@code build} home instead of overwriting it with wherever it happened to pause (often
-     * mid-air on the structure). Turn on for builds that crawl far from the start point.
-     */
     public boolean resetWorkHome = false;
 
-    /**
-     * How many builds' worth of materials to carry per supply trip. {@code 1} (default) = one
-     * full bill of materials for the schematic; a higher number stocks that many copies (handy
-     * for buildRepeat tiling, so the bot makes fewer trips); {@code 0} = infinite, i.e. fill the
-     * bag with as many of the needed blocks as fit. Only ever pulls block types the schematic
-     * actually uses — never quantities of a type beyond {@code count × materialBuilds}.
-     */
     public int materialBuilds = 1;
 
-    /** Ticks the builder may sit idle (after having built) before we treat it as out of materials. */
     public int idleReissueTicks = 60;
-    /** Ticks to wait for the builder to start after a (re)issue before concluding the build is done. */
+
     public int resumeGraceTicks = 120;
 
-    /** Captured supply-chest boxes; each is {minX,minY,minZ,maxX,maxY,maxZ}. */
     public final List<int[]> chestBoxes = new ArrayList<>();
 
     public void setFoodItem(Item item) {
         foodItem = item;
     }
-
-    // ------------------------------------------------------------------ area
 
     public void setArea(List<int[]> boxes) {
         chestBoxes.clear();
@@ -127,12 +82,9 @@ public final class BuilderConfig {
         return stopPos != null;
     }
 
-    /** True when configured to build a schematic file rather than the open Litematica placement. */
     public boolean hasSchematicFile() {
         return schematicFile != null && !schematicFile.isBlank();
     }
-
-    // ----------------------------------------------------------- persistence
 
     private static Path file() {
         return FabricLoader.getInstance().getConfigDir().resolve("baritoneworker").resolve("builder.properties");
@@ -272,7 +224,7 @@ public final class BuilderConfig {
                 for (int i = 0; i < 6; i++) b[i] = Integer.parseInt(parts[i].trim());
                 chestBoxes.add(b);
             } catch (NumberFormatException ignored) {
-                // skip malformed box
+
             }
         }
     }

@@ -14,11 +14,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
 
-/**
- * The {@code #builder} Baritone command — runs the open Litematica schematic
- * unattended, fetching more blocks from a supply area when it runs dry, and
- * stopping at an optional coordinate target.
- */
 public final class BuilderCommand extends Command {
 
     private static final List<String> SUBS = List.of(
@@ -41,8 +36,8 @@ public final class BuilderCommand extends Command {
                 printStatus();
                 return;
             }
-            String raw = args.getString();              // original case — needed for filenames
-            String sub = raw.toLowerCase(Locale.ROOT);   // case-insensitive subcommand matching
+            String raw = args.getString();
+            String sub = raw.toLowerCase(Locale.ROOT);
             switch (sub) {
                 case "start" -> worker.start(ctx.minecraft());
                 case "stop" -> worker.stop(ctx.minecraft());
@@ -59,8 +54,7 @@ public final class BuilderCommand extends Command {
                 case "sethome" -> doSetHome(args);
                 case "builds" -> doBuilds(args);
                 default -> {
-                    // Bare filename like `#builder ZMinus.litematic` → set the file and start, à la #build.
-                    // Use the original-case `raw`; filenames are case-sensitive on Linux/macOS.
+
                     if (raw.contains(".")) {
                         config.schematicFile = raw;
                         config.save();
@@ -98,7 +92,6 @@ public final class BuilderCommand extends Command {
         }
     }
 
-    /** {@code #builder stopat here | <x> <y> <z> | radius <n> | clear} */
     private void doStopAt(IArgConsumer args) {
         if (!args.hasAny()) {
             logDirect(config.hasStop()
@@ -135,7 +128,6 @@ public final class BuilderCommand extends Command {
         }
     }
 
-    /** {@code #builder sethome on|off} — whether to delhome/sethome the work home when materials run out. */
     private void doSetHome(IArgConsumer args) {
         if (!args.hasAny()) {
             logDirect("sethome-on-leaving = " + (config.resetWorkHome ? "§aon" : "§coff")
@@ -158,7 +150,6 @@ public final class BuilderCommand extends Command {
                 + "' where it stops each trip." : "§coff§r — keeps your existing '" + config.workHome + "' home."));
     }
 
-    /** {@code #builder builds <n|infinite>} — how many builds' worth of materials to carry per trip. */
     private void doBuilds(IArgConsumer args) {
         if (!args.hasAny()) {
             logDirect("builds-per-trip = §e" + buildsStr() + "§r (full bills of materials carried per supply trip).");
@@ -184,7 +175,6 @@ public final class BuilderCommand extends Command {
         return config.materialBuilds <= 0 ? "infinite (fill the bag)" : Integer.toString(config.materialBuilds);
     }
 
-    /** {@code #builder file <name> | clear} — build a schematic file instead of the open Litematica placement. */
     private void doFile(IArgConsumer args) {
         if (!args.hasAny()) {
             logDirect(config.hasSchematicFile()
@@ -204,7 +194,6 @@ public final class BuilderCommand extends Command {
         logDirect("Schematic file = §e" + name + "§r (from §eschematics/§r). Run §e#builder start§r to build it.");
     }
 
-    /** {@code #builder origin here | <x> <y> <z> | clear} — fixed corner for the file build. */
     private void doOrigin(IArgConsumer args) {
         if (!args.hasAny()) {
             logDirect(config.buildOriginPos != null
