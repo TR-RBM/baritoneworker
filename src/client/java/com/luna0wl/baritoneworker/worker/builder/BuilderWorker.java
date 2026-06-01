@@ -70,6 +70,10 @@ public final class BuilderWorker {
     private HomeStep homeStep = HomeStep.SETTLE;
     private int homeStepTicks;
 
+    private enum OriginStep { WALK, DELHOME, SETHOME }
+    private OriginStep originStep = OriginStep.WALK;
+    private int originStepTicks;
+
     private int goToWorkRetries;
 
     private boolean workPosKnownThisSession;
@@ -211,9 +215,9 @@ public final class BuilderWorker {
                 }
             }
             case GO_TO_ORIGIN -> {
-                if (buildAnchor == null || nearPos(mc, buildAnchor, config.skipTeleportRange)) {
-                    setState(mc, BuilderState.BUILD);
-                } else {
+                originStep = OriginStep.WALK;
+                originStepTicks = 0;
+                if (buildAnchor != null && !nearPos(mc, buildAnchor, config.skipTeleportRange)) {
                     chat(mc, "Heading to the build origin to resume so it doesn't restart far away.");
                     baritone.getCustomGoalProcess().setGoalAndPath(new GoalGetToBlock(buildAnchor));
                 }
@@ -288,17 +292,50 @@ public final class BuilderWorker {
             setState(mc, BuilderState.BUILD);
             return;
         }
-        boolean here = nearPos(mc, buildAnchor, config.skipTeleportRange)
-                || RotationUtils.reachable(baritone.getPlayerContext(), buildAnchor).isPresent();
-        if (here) {
-            cancelBaritone();
-            chat(mc, "At the build origin — building.");
-            setState(mc, BuilderState.BUILD);
-        } else if (ticksInState > config.chestPathTimeoutTicks) {
-            chat(mc, "§eCouldn't reach the build origin — building from here.");
-            cancelBaritone();
-            setState(mc, BuilderState.BUILD);
+        int g = Math.max(1, config.commandGapTicks);
+        originStepTicks++;
+        switch (originStep) {
+            case WALK -> {
+                boolean here = nearPos(mc, buildAnchor, config.skipTeleportRange)
+                        || RotationUtils.reachable(baritone.getPlayerContext(), buildAnchor).isPresent();
+                if (here) {
+                    cancelBaritone();
+                    if (config.resetWorkHome) {
+                        chat(mc, "At the build origin — setting the build home here.");
+                        advanceOriginStep(OriginStep.DELHOME);
+                    } else {
+                        chat(mc, "At the build origin — building.");
+                        setState(mc, BuilderState.BUILD);
+                    }
+                } else if (originStepTicks > config.chestPathTimeoutTicks) {
+                    chat(mc, "§eCouldn't reach the build origin — building from here.");
+                    cancelBaritone();
+                    setState(mc, BuilderState.BUILD);
+                }
+            }
+            case DELHOME -> {
+                if (originStepTicks >= g) {
+                    sendCommand(mc, "delhome " + config.workHome);
+                    chat(mc, "§7/delhome " + config.workHome);
+                    advanceOriginStep(OriginStep.SETHOME);
+                }
+            }
+            case SETHOME -> {
+                if (originStepTicks >= g) {
+                    sendCommand(mc, "sethome " + config.workHome);
+                    rememberWorkPos(mc);
+                    BlockPos p = mc.player.blockPosition();
+                    chat(mc, "§7/sethome " + config.workHome + "§r at §e" + p.getX() + " " + p.getY() + " " + p.getZ()
+                            + "§r — will teleport back to the origin next time.");
+                    setState(mc, BuilderState.BUILD);
+                }
+            }
         }
+    }
+
+    private void advanceOriginStep(OriginStep s) {
+        originStep = s;
+        originStepTicks = 0;
     }
 
     private boolean isRepeating() {
