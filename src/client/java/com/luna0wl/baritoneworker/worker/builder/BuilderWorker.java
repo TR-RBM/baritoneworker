@@ -50,6 +50,7 @@ public final class BuilderWorker {
     private Map<Item, Integer> required;
     private boolean warnedNoSchematic;
     private final Set<BlockPos> visitedChests = new HashSet<>();
+    private int rescans;
 
     private final BuilderConfig config;
     private final Teleporter teleporter = new Teleporter();
@@ -536,6 +537,7 @@ public final class BuilderWorker {
         ticksInStep = 0;
         actionClicks = 0;
         visitedChests.clear();
+        rescans = 0;
         blocksBeforeService = ContainerService.countMatching(mc.player.getInventory(), this::isMaterial);
         chestQueue.addAll(ContainerService.scanChests(mc.level, config.chestBoxes, mc.player.blockPosition()));
         if (chestQueue.isEmpty()) {
@@ -550,6 +552,19 @@ public final class BuilderWorker {
         ticksInStep++;
 
         if (chestIndex >= chestQueue.size()) {
+            if (moreWorkToDo(mc) && rescans < 6) {
+                if (ticksInStep < 20) return;
+                int before = chestQueue.size();
+                rescanForNewChests(mc);
+                if (chestQueue.size() > before) {
+                    rescans = 0;
+                    chat(mc, "Found more chests in the area — checking those (" + chestQueue.size() + " total).");
+                } else {
+                    rescans++;
+                }
+                setStep(ChestStep.PATH);
+                return;
+            }
             finishService(mc);
             return;
         }
@@ -655,6 +670,14 @@ public final class BuilderWorker {
         if (chestIndex < chestQueue.size()) visitedChests.add(chestQueue.get(chestIndex));
         chestIndex++;
         setStep(ChestStep.PATH);
+    }
+
+    private void rescanForNewChests(Minecraft mc) {
+        for (BlockPos p : ContainerService.scanChests(mc.level, config.chestBoxes, mc.player.blockPosition())) {
+            if (!chestQueue.contains(p) && !visitedChests.contains(p)) {
+                chestQueue.add(p);
+            }
+        }
     }
 
     private void setStep(ChestStep s) {
