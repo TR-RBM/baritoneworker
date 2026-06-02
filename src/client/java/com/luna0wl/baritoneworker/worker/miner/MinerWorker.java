@@ -88,9 +88,11 @@ public final class MinerWorker {
 
         Inventory inv = mc.player.getInventory();
         int picks = ContainerService.countItem(inv, config.pickaxeItem);
+        int shovels = ContainerService.countItem(inv, config.shovelItem);
         int food = ContainerService.countItem(inv, config.foodItem);
-        if (picks < config.targetPickaxes || food < config.targetFood) {
+        if (picks < config.targetPickaxes || shovels < config.targetShovels || food < config.targetFood) {
             chat(mc, "Low on supplies (picks=" + picks + "/" + config.targetPickaxes
+                    + ", shovels=" + shovels + "/" + config.targetShovels
                     + ", food=" + food + "/" + config.targetFood + ") — restocking first.");
             setState(mc, MinerState.GO_TO_HOME);
         } else {
@@ -245,18 +247,19 @@ public final class MinerWorker {
 
     private void enterServiceChests(Minecraft mc) {
         int found = chestRoute.begin(mc, config.chestBoxes, config.includeEnderChests,
-                config.clickDelayTicks, config.chestPathTimeoutTicks, serviceHandler);
-        if (found == 0) {
-            chat(mc, "§cNo chests found in the selected area — stopping.");
-            stop(mc);
-            return;
+                config.clickDelayTicks, config.chestPathTimeoutTicks, false, serviceHandler);
+        if (found > 0) {
+            chat(mc, "Found §e" + found + "§r chest(s) to service.");
         }
-        chat(mc, "Found §e" + found + "§r chest(s) to service.");
     }
 
     private void tickServiceChests(Minecraft mc) {
         switch (chestRoute.tick(mc, baritone)) {
             case FINISHED -> finishService(mc);
+            case EMPTY -> {
+                chat(mc, "§cNo chests found in the selected area — stopping.");
+                stop(mc);
+            }
             case BLOCKED -> {
                 BlockPos blocked = chestRoute.blockedChest();
                 chat(mc, "§cCan't reach the chest at §e"
@@ -272,9 +275,11 @@ public final class MinerWorker {
     private int nextSupplyWithdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
         Inventory inv = mc.player.getInventory();
         int needPick = config.targetPickaxes - ContainerService.countItem(inv, config.pickaxeItem);
+        int needShovel = config.targetShovels - ContainerService.countItem(inv, config.shovelItem);
         int needFood = config.targetFood - ContainerService.countItem(inv, config.foodItem);
         int slot = -1;
         if (needPick > 0) slot = ContainerService.nextWithdrawSlot(menu, config.pickaxeItem);
+        if (slot == -1 && needShovel > 0) slot = ContainerService.nextWithdrawSlot(menu, config.shovelItem);
         if (slot == -1 && needFood > 0) slot = ContainerService.nextWithdrawSlot(menu, config.foodItem);
         return slot;
     }
@@ -282,6 +287,7 @@ public final class MinerWorker {
     private boolean moreWorkToDo(Minecraft mc) {
         Inventory inv = mc.player.getInventory();
         if (config.targetPickaxes - ContainerService.countItem(inv, config.pickaxeItem) > 0) return true;
+        if (config.targetShovels - ContainerService.countItem(inv, config.shovelItem) > 0) return true;
         if (config.targetFood - ContainerService.countItem(inv, config.foodItem) > 0) return true;
         return ContainerService.hasDepositable(mc.player.inventoryMenu, config.keepItems);
     }
@@ -289,12 +295,13 @@ public final class MinerWorker {
     private void finishService(Minecraft mc) {
         Inventory inv = mc.player.getInventory();
         int picks = ContainerService.countItem(inv, config.pickaxeItem);
+        int shovels = ContainerService.countItem(inv, config.shovelItem);
         int food = ContainerService.countItem(inv, config.foodItem);
         if (moreWorkToDo(mc)) {
-            chat(mc, "§eService incomplete (picks=" + picks + ", food=" + food
+            chat(mc, "§eService incomplete (picks=" + picks + ", shovels=" + shovels + ", food=" + food
                     + ") — chests may be full or out of supplies. Continuing anyway.");
         } else {
-            chat(mc, "Serviced chests (picks=" + picks + ", food=" + food + "). Back to mining.");
+            chat(mc, "Serviced chests (picks=" + picks + ", shovels=" + shovels + ", food=" + food + "). Back to mining.");
         }
         setState(mc, MinerState.GO_TO_MINE);
     }

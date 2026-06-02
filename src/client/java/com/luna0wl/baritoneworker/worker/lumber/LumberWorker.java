@@ -541,18 +541,19 @@ public final class LumberWorker {
 
     private void enterServiceChests(Minecraft mc) {
         int found = chestRoute.begin(mc, config.chestBoxes, config.includeEnderChests,
-                config.clickDelayTicks, config.chestPathTimeoutTicks, serviceHandler);
-        if (found == 0) {
-            chat(mc, "§cNo chests found in the selected area — stopping.");
-            stop(mc);
-            return;
+                config.clickDelayTicks, config.chestPathTimeoutTicks, false, serviceHandler);
+        if (found > 0) {
+            chat(mc, "Found §e" + found + "§r chest(s) to service.");
         }
-        chat(mc, "Found §e" + found + "§r chest(s) to service.");
     }
 
     private void tickServiceChests(Minecraft mc) {
         switch (chestRoute.tick(mc, baritone)) {
             case FINISHED -> finishService(mc);
+            case EMPTY -> {
+                chat(mc, "§cNo chests found in the selected area — stopping.");
+                stop(mc);
+            }
             case BLOCKED -> {
                 BlockPos blocked = chestRoute.blockedChest();
                 chat(mc, "§cCan't reach the chest at §e"

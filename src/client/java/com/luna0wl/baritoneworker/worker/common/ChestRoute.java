@@ -28,7 +28,7 @@ public final class ChestRoute {
         void chat(String msg);
     }
 
-    public enum Result { RUNNING, FINISHED, BLOCKED }
+    public enum Result { RUNNING, FINISHED, BLOCKED, EMPTY }
 
     private enum Step { PATH, OPEN, DEPOSIT, WITHDRAW, CLOSE }
 
@@ -36,6 +36,7 @@ public final class ChestRoute {
     private static final int OPEN_TIMEOUT_TICKS = 100;
     private static final int RESCAN_LIMIT = 6;
     private static final int RESCAN_SETTLE_TICKS = 20;
+    private static final int CHUNK_LOAD_RETRIES = 6;
 
     private final List<BlockPos> queue = new ArrayList<>();
     private final Set<BlockPos> visited = new HashSet<>();
@@ -43,6 +44,7 @@ public final class ChestRoute {
     private Handler handler;
     private List<int[]> boxes;
     private boolean includeEnderChests;
+    private boolean rescanForMore;
     private int clickDelayTicks;
     private int chestPathTimeoutTicks;
 
@@ -58,10 +60,11 @@ public final class ChestRoute {
     private Boolean savedAllowBreak;
 
     public int begin(Minecraft mc, List<int[]> boxes, boolean includeEnderChests,
-                     int clickDelayTicks, int chestPathTimeoutTicks, Handler handler) {
+                     int clickDelayTicks, int chestPathTimeoutTicks, boolean rescanForMore, Handler handler) {
         this.handler = handler;
         this.boxes = boxes;
         this.includeEnderChests = includeEnderChests;
+        this.rescanForMore = rescanForMore;
         this.clickDelayTicks = clickDelayTicks;
         this.chestPathTimeoutTicks = chestPathTimeoutTicks;
         queue.clear();
@@ -192,7 +195,10 @@ public final class ChestRoute {
     }
 
     private Result atQueueEnd(Minecraft mc, IBaritone baritone) {
-        if (handler.moreWorkToDo(mc) && rescans < RESCAN_LIMIT) {
+        if (visited.isEmpty()) {
+            return awaitInitialChests(mc);
+        }
+        if (rescanForMore && handler.moreWorkToDo(mc) && rescans < RESCAN_LIMIT) {
             if (ticksInStep < RESCAN_SETTLE_TICKS) return Result.RUNNING;
             int before = queue.size();
             rescan(mc);
@@ -206,6 +212,23 @@ public final class ChestRoute {
             return Result.RUNNING;
         }
         return finish();
+    }
+
+    private Result awaitInitialChests(Minecraft mc) {
+        if (ticksInStep < RESCAN_SETTLE_TICKS) return Result.RUNNING;
+        rescan(mc);
+        if (!queue.isEmpty()) {
+            rescans = 0;
+            handler.chat("Found " + queue.size() + " chest(s) to service.");
+            setStep(Step.PATH);
+            return Result.RUNNING;
+        }
+        if (++rescans >= CHUNK_LOAD_RETRIES) {
+            restoreBreak();
+            return Result.EMPTY;
+        }
+        ticksInStep = 0;
+        return Result.RUNNING;
     }
 
     private Result retryOrBlock(BlockPos chest, String why) {

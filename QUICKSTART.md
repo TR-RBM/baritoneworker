@@ -22,7 +22,7 @@ Build with `JAVA_HOME=<jdk-25> ./gradlew build`, then drop
 
 ## Miner
 1. `/sethome mine` at the tunnel face, looking down the tunnel; `/sethome Home` by the chests.
-2. `#sel 1`/`#sel 2` the chest room → `#miner area`. Stock pickaxes + food.
+2. `#sel 1`/`#sel 2` the chest room → `#miner area`. Stock pickaxes + shovels + food.
 3. `\` (backslash) or `#miner start`. Optional: `#miner ore on` to grab wall ore.
 
 ## Lumber

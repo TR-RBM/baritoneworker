@@ -58,7 +58,7 @@ folder alongside Baritone.
 - **Homes** are Essentials homes the worker teleports to. `/home` has a warm-up
   delay, so the workers wait for the actual position jump rather than a fixed
   timer.
-- **Kept items** are never deposited (the miner keeps its pickaxe/food/torches,
+- **Kept items** are never deposited (the miner keeps its pickaxe/shovel/food/torches,
   the lumber bot its axe/food/saplings). Armor and the off-hand are never touched.
 - **Restocking is wall-safe and never skips a chest.** While a worker services its
   supply chests it temporarily disables Baritone's block-breaking, so it won't tear
@@ -68,6 +68,14 @@ folder alongside Baritone.
   ignored by default — turn them on per worker with `ender on` (e.g. `#miner ender on`).
   The miner, lumber and builder share one chest-finding/restock module
   (`common/ChestRoute`), so the same behaviour applies to all three.
+- **Chunk-load tolerant.** Right after teleporting home the surrounding chunks may
+  not have loaded yet, so the first chest scan can momentarily come back empty. The
+  workers wait and rescan for a few seconds before concluding an area has no chests,
+  instead of bailing on the very first tick.
+- **Sweep vs. service.** The builder keeps re-scanning the supply area for more
+  chests while it still needs materials (it has to gather everything). The miner and
+  lumber bot don't: they service the chests they found, then head straight back to
+  work — they won't keep walking the whole room after they've deposited and restocked.
 - Settings persist under `config/baritoneworker/` (`builder.properties`,
   `miner.properties`, `lumber.properties`, `sorter.properties`, `mover.properties`,
   `sortscheme.json`).
@@ -81,7 +89,7 @@ Mine → tunnel → return when full → deposit + restock → repeat.
 1. `/sethome mine` at the tunnel face, **looking the way you want to dig**.
 2. `/sethome Home` by your storage room.
 3. `#sel 1` / `#sel 2` around the chest room, then `#miner area`.
-4. Put spare pickaxes + food in those chests.
+4. Put spare pickaxes + shovels + food in those chests.
 5. `#miner start` (or the `\` keybind).
 
 | Command | Effect |
@@ -89,6 +97,7 @@ Mine → tunnel → return when full → deposit + restock → repeat.
 | `#miner start` / `stop` | run / halt |
 | `#miner area [clear]` | capture the current selection as the chest area |
 | `#miner pickaxe <n\|item>` | how many / which pickaxe to keep (default `2`, `diamond_pickaxe`) |
+| `#miner shovel <n\|item>` | how many / which shovel to keep (default `1`, `diamond_shovel`; `0` disables) |
 | `#miner food <n\|item>` | how much / which food to keep (default `64`, `baked_potato`) |
 | `#miner freeslots <n>` | return to base at this many free slots (default `1`) |
 | `#miner mine <name>` / `home <name>` | home names |

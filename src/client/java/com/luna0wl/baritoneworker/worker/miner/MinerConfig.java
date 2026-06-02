@@ -29,9 +29,13 @@ public final class MinerConfig {
 
     public Item pickaxeItem = Items.DIAMOND_PICKAXE;
 
+    public Item shovelItem = Items.DIAMOND_SHOVEL;
+
     public Item foodItem = Items.BAKED_POTATO;
 
     public int targetPickaxes = 2;
+
+    public int targetShovels = 1;
 
     public int targetFood = 64;
 
@@ -67,12 +71,18 @@ public final class MinerConfig {
     public void rebuildKeep() {
         keepItems.clear();
         keepItems.add(pickaxeItem);
+        keepItems.add(shovelItem);
         keepItems.add(foodItem);
         keepItems.addAll(extraKeepItems);
     }
 
     public void setPickaxeItem(Item item) {
         pickaxeItem = item;
+        rebuildKeep();
+    }
+
+    public void setShovelItem(Item item) {
+        shovelItem = item;
         rebuildKeep();
     }
 
@@ -127,8 +137,10 @@ public final class MinerConfig {
         p.setProperty("mineHome", mineHome);
         p.setProperty("baseHome", baseHome);
         p.setProperty("pickaxeItem", ItemNames.idOf(pickaxeItem));
+        p.setProperty("shovelItem", ItemNames.idOf(shovelItem));
         p.setProperty("foodItem", ItemNames.idOf(foodItem));
         p.setProperty("targetPickaxes", Integer.toString(targetPickaxes));
+        p.setProperty("targetShovels", Integer.toString(targetShovels));
         p.setProperty("targetFood", Integer.toString(targetFood));
         p.setProperty("stopAtFreeSlots", Integer.toString(stopAtFreeSlots));
         p.setProperty("teleportTimeoutTicks", Integer.toString(teleportTimeoutTicks));
@@ -173,9 +185,12 @@ public final class MinerConfig {
         baseHome = p.getProperty("baseHome", baseHome);
         Item pi = ItemNames.byId(p.getProperty("pickaxeItem", ""));
         if (pi != null) pickaxeItem = pi;
+        Item si = ItemNames.byId(p.getProperty("shovelItem", ""));
+        if (si != null) shovelItem = si;
         Item fi = ItemNames.byId(p.getProperty("foodItem", ""));
         if (fi != null) foodItem = fi;
         targetPickaxes = parseInt(p, "targetPickaxes", targetPickaxes);
+        targetShovels = parseInt(p, "targetShovels", targetShovels);
         targetFood = parseInt(p, "targetFood", targetFood);
         stopAtFreeSlots = parseInt(p, "stopAtFreeSlots", stopAtFreeSlots);
         teleportTimeoutTicks = parseInt(p, "teleportTimeoutTicks", teleportTimeoutTicks);

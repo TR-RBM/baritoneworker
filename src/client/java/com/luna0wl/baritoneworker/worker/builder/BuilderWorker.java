@@ -580,18 +580,19 @@ public final class BuilderWorker {
     private void enterServiceChests(Minecraft mc) {
         blocksBeforeService = ContainerService.countMatching(mc.player.getInventory(), this::isMaterial);
         int found = chestRoute.begin(mc, config.chestBoxes, config.includeEnderChests,
-                config.clickDelayTicks, config.chestPathTimeoutTicks, restockHandler);
-        if (found == 0) {
-            chat(mc, "§cNo chests found in the supply area — stopping.");
-            stop(mc);
-            return;
+                config.clickDelayTicks, config.chestPathTimeoutTicks, true, restockHandler);
+        if (found > 0) {
+            chat(mc, "Found §e" + found + "§r supply chest(s).");
         }
-        chat(mc, "Found §e" + found + "§r supply chest(s).");
     }
 
     private void tickServiceChests(Minecraft mc) {
         switch (chestRoute.tick(mc, baritone)) {
             case FINISHED -> finishService(mc);
+            case EMPTY -> {
+                chat(mc, "§cNo chests found in the supply area — stopping.");
+                stop(mc);
+            }
             case BLOCKED -> {
                 BlockPos blocked = chestRoute.blockedChest();
                 chat(mc, "§cCan't reach the chest at §e"

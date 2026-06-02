@@ -17,8 +17,10 @@ import java.util.stream.Stream;
 public final class MinerCommand extends Command {
 
     private static final List<String> SUBS = List.of(
-            "start", "stop", "status", "area", "pickaxe", "pickaxes", "food",
+            "start", "stop", "status", "area", "pickaxe", "pickaxes", "shovel", "shovels", "food",
             "freeslots", "mine", "home", "ore", "ender", "save");
+
+    private enum Supply { PICKAXE, SHOVEL, FOOD }
 
     private final MinerWorker worker;
     private final MinerConfig config;
@@ -43,8 +45,9 @@ public final class MinerCommand extends Command {
                 case "status" -> printStatus();
                 case "save" -> { config.save(); logDirect("Settings saved."); }
                 case "area" -> doArea(args);
-                case "pickaxes", "pickaxe" -> doSupply(args, true);
-                case "food" -> doSupply(args, false);
+                case "pickaxes", "pickaxe" -> doSupply(args, Supply.PICKAXE);
+                case "shovels", "shovel" -> doSupply(args, Supply.SHOVEL);
+                case "food" -> doSupply(args, Supply.FOOD);
                 case "freeslots" -> { config.stopAtFreeSlots = nextInt(args, config.stopAtFreeSlots); config.save(); logDirect("stopAtFreeSlots = " + config.stopAtFreeSlots); }
                 case "mine" -> { config.mineHome = args.getString(); config.save(); logDirect("mineHome = " + config.mineHome); }
                 case "home" -> { config.baseHome = args.getString(); config.save(); logDirect("baseHome = " + config.baseHome); }
@@ -57,27 +60,53 @@ public final class MinerCommand extends Command {
         }
     }
 
-    private void doSupply(IArgConsumer args, boolean pickaxe) {
-        String label = pickaxe ? "pickaxe" : "food";
+    private void doSupply(IArgConsumer args, Supply kind) {
+        String label = switch (kind) {
+            case PICKAXE -> "pickaxe";
+            case SHOVEL -> "shovel";
+            case FOOD -> "food";
+        };
+        Item current = switch (kind) {
+            case PICKAXE -> config.pickaxeItem;
+            case SHOVEL -> config.shovelItem;
+            case FOOD -> config.foodItem;
+        };
+        int target = switch (kind) {
+            case PICKAXE -> config.targetPickaxes;
+            case SHOVEL -> config.targetShovels;
+            case FOOD -> config.targetFood;
+        };
         if (!args.hasAny()) {
-            logDirect(label + ": item=§e" + ItemNames.idOf(pickaxe ? config.pickaxeItem : config.foodItem)
-                    + "§r keep=§e" + (pickaxe ? config.targetPickaxes : config.targetFood));
+            logDirect(label + ": item=§e" + ItemNames.idOf(current) + "§r keep=§e" + target);
             return;
         }
         String s = args.getString().trim();
         try {
             int n = Math.max(0, Integer.parseInt(s));
-            if (pickaxe) config.targetPickaxes = n; else config.targetFood = n;
+            switch (kind) {
+                case PICKAXE -> config.targetPickaxes = n;
+                case SHOVEL -> config.targetShovels = n;
+                case FOOD -> config.targetFood = n;
+            }
             config.save();
             logDirect("keep " + label + " count = §e" + n);
         } catch (NumberFormatException e) {
             Item it = ItemNames.byId(s);
             if (it == null) {
+                String example = switch (kind) {
+                    case PICKAXE -> "netherite_pickaxe";
+                    case SHOVEL -> "netherite_shovel";
+                    case FOOD -> "cooked_beef";
+                };
                 logDirect("§cUnknown item '" + s + "'. Give a registry id (e.g. §e"
-                        + (pickaxe ? "netherite_pickaxe" : "cooked_beef") + "§c) or a number.");
+                        + example + "§c) or a number.");
                 return;
             }
-            if (pickaxe) config.setPickaxeItem(it); else config.setFoodItem(it);
+            switch (kind) {
+                case PICKAXE -> config.setPickaxeItem(it);
+                case SHOVEL -> config.setShovelItem(it);
+                case FOOD -> config.setFoodItem(it);
+            }
             config.save();
             logDirect(label + " item = §e" + ItemNames.idOf(it));
         }
@@ -210,6 +239,7 @@ public final class MinerCommand extends Command {
         logDirect("§9BaritoneWorker§r — state: §e" + worker.getState());
         logDirect(" mineHome=§e" + config.mineHome + "§r baseHome=§e" + config.baseHome);
         logDirect(" pickaxe=§e" + ItemNames.idOf(config.pickaxeItem) + "§r×" + config.targetPickaxes
+                + "§r  shovel=§e" + ItemNames.idOf(config.shovelItem) + "§r×" + config.targetShovels
                 + "§r  food=§e" + ItemNames.idOf(config.foodItem) + "§r×" + config.targetFood
                 + "§r  stopAtFreeSlots=§e" + config.stopAtFreeSlots);
         logDirect(" chestArea=§e" + config.chestBoxes.size() + "§r box(es)"
@@ -248,6 +278,8 @@ public final class MinerCommand extends Command {
                 "> miner area [clear] - capture the current selection as the chest area",
                 "> miner pickaxe <n> - how many pickaxes to keep stocked (default 2)",
                 "> miner pickaxe <item> - which pickaxe (e.g. netherite_pickaxe)",
+                "> miner shovel <n> - how many shovels to keep stocked (default 1; 0 disables)",
+                "> miner shovel <item> - which shovel (e.g. netherite_shovel)",
                 "> miner food <n> - how much food to keep stocked (default 64)",
                 "> miner food <item> - which food (e.g. cooked_beef)",
                 "> miner freeslots <n> - return to base at this many free slots (default 1)",
