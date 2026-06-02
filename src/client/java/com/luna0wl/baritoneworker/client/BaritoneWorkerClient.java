@@ -6,6 +6,9 @@ import com.luna0wl.baritoneworker.worker.builder.BuilderCommand;
 import com.luna0wl.baritoneworker.worker.builder.BuilderConfig;
 import com.luna0wl.baritoneworker.worker.builder.BuilderWorker;
 import com.luna0wl.baritoneworker.worker.common.Baritones;
+import com.luna0wl.baritoneworker.worker.digger.DiggerCommand;
+import com.luna0wl.baritoneworker.worker.digger.DiggerConfig;
+import com.luna0wl.baritoneworker.worker.digger.DiggerWorker;
 import com.luna0wl.baritoneworker.worker.lumber.LumberCommand;
 import com.luna0wl.baritoneworker.worker.lumber.LumberConfig;
 import com.luna0wl.baritoneworker.worker.lumber.LumberWorker;
@@ -49,6 +52,9 @@ public class BaritoneWorkerClient implements ClientModInitializer {
     private final BuilderConfig builderConfig = new BuilderConfig();
     private final BuilderWorker builder = new BuilderWorker(builderConfig);
 
+    private final DiggerConfig diggerConfig = new DiggerConfig();
+    private final DiggerWorker digger = new DiggerWorker(diggerConfig);
+
     private KeyMapping toggleKey;
     private boolean commandRegistered;
 
@@ -59,6 +65,7 @@ public class BaritoneWorkerClient implements ClientModInitializer {
         sorterConfig.load();
         moverConfig.load();
         builderConfig.load();
+        diggerConfig.load();
         scheme.load();
 
         toggleKey = new KeyMapping(
@@ -77,6 +84,7 @@ public class BaritoneWorkerClient implements ClientModInitializer {
             sorter.tick(mc);
             mover.tick(mc);
             builder.tick(mc);
+            digger.tick(mc);
         });
 
         ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> tryRegisterCommands());
@@ -84,7 +92,7 @@ public class BaritoneWorkerClient implements ClientModInitializer {
         if (!Baritones.isLoaded()) {
             LOG.warn("Baritone (baritone-meteor) is not installed — the workers will refuse to start.");
         }
-        LOG.info("BaritoneWorker client initialized (miner, lumber, sorter, mover, builder).");
+        LOG.info("BaritoneWorker client initialized (miner, lumber, sorter, mover, builder, digger).");
     }
 
     private void tryRegisterCommands() {
@@ -98,8 +106,9 @@ public class BaritoneWorkerClient implements ClientModInitializer {
             registry.register(new SorterCommand(baritone, sorter, sorterConfig, scheme));
             registry.register(new MoverCommand(baritone, mover, moverConfig));
             registry.register(new BuilderCommand(baritone, builder, builderConfig));
+            registry.register(new DiggerCommand(baritone, digger, diggerConfig));
             commandRegistered = true;
-            LOG.info("Registered #miner, #lumber, #sorter, #mover, #builder commands.");
+            LOG.info("Registered #miner, #lumber, #sorter, #mover, #builder, #digger commands.");
         } catch (Throwable t) {
             LOG.warn("Could not register worker commands: {}", t.toString());
         }

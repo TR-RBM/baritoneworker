@@ -14,6 +14,7 @@ commands and the workers no longer trip over each other.
 | **Sorter** | `#sorter` | Organizes the chests in an area so each item lands in the chest tagged for it. |
 | **Mover**  | `#mover`  | Moves every chest in a source area into a destination area — a positional copy, or re-sorted. |
 | **Builder**| `#builder`| Builds a [Litematica](https://modrinth.com/mod/litematica) schematic (or a schematic file), fetching only the blocks it still needs from a supply area when it runs dry. |
+| **Digger** | `#digger` | Excavates a whole selected region (terraforming / clearing huge chunks), hauls the spoil to chests, restocks tools, buckets lava and drains water. |
 
 The workers are independent; **run one at a time**.
 
@@ -108,7 +109,7 @@ folder alongside Baritone.
   Default **off**.
 - Settings persist under `config/baritoneworker/` (`builder.properties`,
   `miner.properties`, `lumber.properties`, `sorter.properties`, `mover.properties`,
-  `sortscheme.json`).
+  `digger.properties`, `sortscheme.json`).
 
 ---
 
@@ -344,6 +345,78 @@ restocking it won't break walls to reach a chest and never skips one — see
 
 ---
 
+## Digger — `#digger`
+
+Excavates a whole selected region empty — for terraforming, clearing a perimeter, or
+digging out huge chunks — then hauls the spoil to chests and restocks its tools, all
+unattended. It is the automation equivalent of Baritone's `#sel cleararea`, but it
+**breaks each block itself** (aiming at one block and holding the break until it is
+actually gone before moving on), so it doesn't suffer the jittery, never-finishing
+block-breaking Baritone has in this version. Break time follows the real block — instant
+for sand/gravel/dirt, longer for stone/obsidian — because it waits for the block to
+disappear rather than a fixed timer.
+
+It digs **top-down, one layer at a time**, so it always stands on solid ground and never
+drops itself into a pit. Mined drops are picked up automatically as it moves through the
+cleared space.
+
+### Setup
+
+1. `#sel 1` / `#sel 2` around the region you want gone, then `#digger area`.
+2. `/sethome dig` at a safe spot by the region, `/sethome Home` by your chests.
+3. Select your tool chests and run `#digger supply`. Stock them with spare **pickaxes,
+   shovels, food and empty buckets**.
+4. *(optional)* For a separate, large spoil dump: `/sethome dump` by those chests,
+   `#sel` them, `#digger dump`, then `#digger dump home dump`. Skip this to dump the
+   spoil straight into the supply chests (one-home mode).
+5. `#digger start`.
+
+### Commands
+
+| Command | Effect |
+|---------|--------|
+| `#digger start` / `stop` | run / halt |
+| `#digger area [clear]` | capture the current selection as the region to excavate |
+| `#digger supply [clear \| home <name>]` | tool/food/bucket chests (capture selection, or set their home) |
+| `#digger dump [clear \| home <name>]` | spoil chests (optional; defaults to the supply chests) |
+| `#digger pickaxe <n\|item>` / `shovel <n\|item>` / `food <n\|item>` | how many / which to keep stocked |
+| `#digger buckets <n>` | empty buckets to keep for fluids (default `4`) |
+| `#digger freeslots <n>` | haul spoil out at this many free slots (default `1`) |
+| `#digger fluid on\|off` | bucket lava (and collect it) and drain water (default **on**) |
+| `#digger breakmove on\|off` | let Baritone break blocks to reposition between spots (default **on**) |
+| `#digger sethome on\|off` | move the `dig` home to the work face each trip (default **on**) |
+| `#digger ender on\|off` | also service ender chests in the chest areas (default off) |
+| `#digger work <name>` | the dig-site home name |
+
+### Lava and water
+
+With `fluid on` (the default) the digger handles fluids before they flood the dig:
+
+- **Lava** is scooped with a bucket and **collected** — the lava buckets ride home as loot
+  and are dropped into the dump chests.
+- **Water** is scooped to **drain** it — removing the source block makes the flow recede;
+  the water buckets are also deposited (refill empty buckets from the supply chests).
+
+So stock plenty of **empty buckets**; filled buckets are treated as spoil and emptied at
+the chests, and the digger restocks empties on its next supply run. With `fluid off` it
+never opens a block next to a fluid source — it leaves those spots and reports them
+instead, so it can't drown the dig.
+
+### One home or two
+
+It works with a single home/area (deposit spoil **and** withdraw tools from the same
+chests) or two (withdraw at the `supply` home, dump spoil at the `dump` home). Set a dump
+area to use two; leave it unset for one. Restocking is **wall-safe and never skips a
+chest** — see **Shared concepts** above. If a tool, food or bucket runs out, or the
+inventory fills up, it hauls out, services the chests and resumes exactly where it left off
+(the `dig` home advances to the current face each trip, unless you set `sethome off`).
+
+> Blocks it genuinely can't reach without breaking (with `breakmove off`), can't break
+> (bedrock), or fluids it can't drain are **left in place and reported** rather than
+> skipped silently.
+
+---
+
 ## Controls
 
 - **Keybind:** `\` (backslash) toggles the **miner** on/off. Rebind under
@@ -362,7 +435,8 @@ src/client/java/com/luna0wl/baritoneworker/
     ├── lumber/   # LumberWorker, LumberConfig, LumberCommand, LumberState, Woods
     ├── sorter/   # SorterWorker, SorterConfig, SorterCommand, SortState, SortScheme
     ├── mover/    # MoverWorker, MoverConfig, MoverCommand, MoverState
-    └── builder/  # BuilderWorker, BuilderConfig, BuilderCommand, BuilderState
+    ├── builder/  # BuilderWorker, BuilderConfig, BuilderCommand, BuilderState
+    └── digger/   # DiggerWorker, DiggerConfig, DiggerCommand, DiggerState
 ```
 
 ## License

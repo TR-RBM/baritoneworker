@@ -1,7 +1,7 @@
 # BaritoneWorker — Quick Start
 
-Five autonomous Baritone workers for **MC 26.1.2** (Fabric): **miner**, **lumber**,
-**sorter**, **mover**, **builder**. Run one at a time.
+Six autonomous Baritone workers for **MC 26.1.2** (Fabric): **miner**, **lumber**,
+**sorter**, **mover**, **builder**, **digger**. Run one at a time.
 
 ## Needs
 - Fabric Loader + Fabric API
@@ -9,7 +9,7 @@ Five autonomous Baritone workers for **MC 26.1.2** (Fabric): **miner**, **lumber
 
 ## Install
 Build with `JAVA_HOME=<jdk-25> ./gradlew build`, then drop
-`build/libs/baritoneworker-1.3.1.jar` into your `mods/` folder next to Baritone.
+`build/libs/baritoneworker-1.3.2.jar` into your `mods/` folder next to Baritone.
 
 ## Shared setup
 - Capture an area the mod's own way: stand on one corner and run the worker's
@@ -54,5 +54,14 @@ Build with `JAVA_HOME=<jdk-25> ./gradlew build`, then drop
 1. Open your schematic in **Litematica**. `/sethome build` at the site; `/sethome Home` by the supply room.
 2. Stock the supply room with the schematic's blocks (+ food). `#builder corner1`/`corner2` on its corners.
 3. Optional finish line: `#builder stopat <x> <y> <z>`. Then `#builder start` — it refills blocks when it runs dry and resumes.
+
+## Digger
+Excavates a whole region empty (terraforming / clearing big chunks). Breaks each block itself
+(holding until it's gone — no Baritone break-jitter), digs top-down, hauls spoil to chests,
+restocks tools, buckets lava and drains water.
+1. `#sel 1`/`#sel 2` the region → `#digger area`. `/sethome dig` at the site; `/sethome Home` by the chests.
+2. `#sel` your tool chests → `#digger supply`. Stock spare pickaxes, shovels, food and **empty buckets**.
+3. Optional separate spoil dump: `#sel` those chests → `#digger dump`, `#digger dump home <name>`. Else spoil goes to the supply chests.
+4. `#digger start`. Lava is collected, water drained; turn it off with `#digger fluid off`.
 
 Full details in `README.md`.
