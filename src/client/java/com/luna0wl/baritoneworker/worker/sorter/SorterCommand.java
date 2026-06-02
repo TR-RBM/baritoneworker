@@ -16,11 +16,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
 
-/**
- * The {@code #sorter} Baritone command — start/stop the sorter, capture the
- * chest area, and label chests in-game. Tags also come from signs and the
- * {@code sortscheme.json}; {@code assign} just lets you pin tags without a sign.
- */
 public final class SorterCommand extends Command {
 
     private static final List<String> SUBS = List.of(
@@ -62,7 +57,6 @@ public final class SorterCommand extends Command {
         }
     }
 
-    /** {@code #sorter assign <tag…>} — pin tags onto the chest you're looking at. */
     private void doAssign(IArgConsumer args) {
         HitResult hr = ctx.minecraft().hitResult;
         if (!(hr instanceof BlockHitResult bhr)) {

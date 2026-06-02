@@ -18,7 +18,7 @@ public final class BuilderCommand extends Command {
 
     private static final List<String> SUBS = List.of(
             "start", "stop", "status", "area", "food", "work", "home",
-            "litematic", "file", "origin", "stopat", "sethome", "builds", "save");
+            "litematic", "file", "origin", "stopat", "sethome", "builds", "ender", "save");
 
     private final BuilderWorker worker;
     private final BuilderConfig config;
@@ -53,6 +53,7 @@ public final class BuilderCommand extends Command {
                 case "stopat" -> doStopAt(args);
                 case "sethome" -> doSetHome(args);
                 case "builds" -> doBuilds(args);
+                case "ender" -> doEnder(args);
                 default -> {
 
                     if (raw.contains(".")) {
@@ -175,6 +176,28 @@ public final class BuilderCommand extends Command {
         return config.materialBuilds <= 0 ? "infinite (fill the bag)" : Integer.toString(config.materialBuilds);
     }
 
+    private void doEnder(IArgConsumer args) {
+        if (!args.hasAny()) {
+            logDirect("ender-chests = " + (config.includeEnderChests ? "§aon" : "§coff")
+                    + "§r — " + (config.includeEnderChests
+                        ? "ender chests in the supply area are restocked from too."
+                        : "ender chests in the supply area are ignored."));
+            logDirect("Usage: §e#builder ender on|off");
+            return;
+        }
+        String a = args.getString().toLowerCase(Locale.ROOT);
+        boolean on = a.equals("on") || a.equals("true") || a.equals("yes") || a.equals("1") || a.equals("include");
+        boolean off = a.equals("off") || a.equals("false") || a.equals("no") || a.equals("0") || a.equals("ignore");
+        if (!on && !off) {
+            logDirect("Usage: §e#builder ender on|off");
+            return;
+        }
+        config.includeEnderChests = on;
+        config.save();
+        logDirect("ender-chests = " + (on ? "§aon§r — will also restock from ender chests."
+                : "§coff§r — ender chests are ignored."));
+    }
+
     private void doFile(IArgConsumer args) {
         if (!args.hasAny()) {
             logDirect(config.hasSchematicFile()
@@ -270,7 +293,8 @@ public final class BuilderCommand extends Command {
                 : "§eopen Litematica #" + config.litematicIndex));
         logDirect(" food=§e" + ItemNames.idOf(config.foodItem) + "§r×" + config.targetFood);
         logDirect(" supplyArea=§e" + config.chestBoxes.size() + "§r box(es)"
-                + (config.hasArea() ? "" : " §c(not set — run #builder area)"));
+                + (config.hasArea() ? "" : " §c(not set — run #builder area)")
+                + "§r enderChests=" + (config.includeEnderChests ? "§aon" : "§coff"));
         logDirect(" stopAt=" + (config.hasStop() ? "§e" + posStr(config.stopPos) + "§r r=" + config.stopRadius : "§c(off)"));
         logDirect(" sethome-on-leaving=" + (config.resetWorkHome ? "§aon" : "§coff")
                 + "§r builds-per-trip=§e" + buildsStr());
@@ -315,6 +339,7 @@ public final class BuilderCommand extends Command {
                 "> builder stopat here | <x> <y> <z> | radius <n> | clear - stop when this spot is reached",
                 "> builder sethome on|off - move the 'build' home to where it stops each trip (default off)",
                 "> builder builds <n|infinite> - builds' worth of materials to carry per supply trip (default 1)",
+                "> builder ender on|off - also restock from ender chests in the area (default off)",
                 "",
                 "Two build sources: the schematic open in Litematica (default), or a schematic FILE",
                 "from your schematics/ folder (set with 'file', just like Baritone's own #build —",

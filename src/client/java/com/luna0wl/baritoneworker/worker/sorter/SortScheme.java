@@ -21,42 +21,20 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * The sort scheme: which items belong in which chest. A chest's "tags" come from
- * two places — signs placed on/by it (read live), and this JSON file
- * ({@code config/baritoneworker/sortscheme.json}) which can pre-define many chests
- * by position and define custom groups.
- *
- * <p>A tag matches an item if it is: an {@link ItemCategories} keyword (e.g.
- * {@code ores}, {@code logs}, {@code food}); a custom group named in this file;
- * or a literal item id (namespace optional, e.g. {@code diamond} or
- * {@code minecraft:diamond}).
- *
- * <pre>
- * {
- *   "groups":  { "smeltables": ["raw_iron", "raw_gold", "raw_copper"] },
- *   "chests":  [ { "pos": [10, 64, 20], "tags": ["ores", "smeltables"] } ]
- * }
- * </pre>
- */
 public final class SortScheme {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritoneworker/sortscheme");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final int MAX_TAG_DEPTH = 8;
 
-    /** group name -> member tokens (item ids, category keywords, or other groups). */
     private final Map<String, List<String>> groups = new LinkedHashMap<>();
-    /** "x,y,z" -> tags assigned to that chest position. */
-    private final Map<String, List<String>> chestTags = new LinkedHashMap<>();
 
-    // ----------------------------------------------------------- file access
+    private final Map<String, List<String>> chestTags = new LinkedHashMap<>();
 
     private static Path file() {
         return FabricLoader.getInstance().getConfigDir().resolve("baritoneworker").resolve("sortscheme.json");
     }
 
-    /** (Re)load the scheme from disk; missing file just means "signs only". */
     public void load() {
         groups.clear();
         chestTags.clear();
@@ -101,14 +79,10 @@ public final class SortScheme {
         }
     }
 
-    // ------------------------------------------------------------- queries
-
-    /** Tags pinned to this position in the JSON (empty if none). */
     public List<String> pinnedTags(BlockPos pos) {
         return chestTags.getOrDefault(key(pos.getX(), pos.getY(), pos.getZ()), List.of());
     }
 
-    /** Assign (overwrite) the tags for a chest position and persist. */
     public void assign(BlockPos pos, List<String> tags) {
         chestTags.put(key(pos.getX(), pos.getY(), pos.getZ()), lower(tags));
         save();
@@ -118,7 +92,6 @@ public final class SortScheme {
         return !chestTags.isEmpty();
     }
 
-    /** True if a chest carrying {@code tags} should hold {@code item}. */
     public boolean accepts(List<String> tags, Item item) {
         for (String tag : tags) {
             if (tagMatches(tag, item, 0)) return true;
@@ -140,12 +113,10 @@ public final class SortScheme {
         if (ItemCategories.isCategory(tag)) {
             return ItemCategories.matches(tag, item);
         }
-        // Literal item id (namespace optional).
+
         return ItemNames.idOf(item).equals(tag) || ItemNames.pathOf(item).equals(tag)
                 || ("minecraft:" + ItemNames.pathOf(item)).equals(tag);
     }
-
-    // ------------------------------------------------------------- helpers
 
     private static List<String> lower(List<String> in) {
         List<String> out = new ArrayList<>(in.size());
@@ -156,8 +127,6 @@ public final class SortScheme {
     private static String key(int x, int y, int z) {
         return x + "," + y + "," + z;
     }
-
-    // ----------------------------------------------------------- json shape
 
     private static final class SchemeJson {
         Map<String, List<String>> groups;

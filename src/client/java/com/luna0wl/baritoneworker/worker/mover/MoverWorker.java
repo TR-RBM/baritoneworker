@@ -23,15 +23,6 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * The stash mover, driven once per client tick. Shuttles between a source
- * {@code /home} and a destination {@code /home}, emptying source chests one at a
- * time and depositing the contents at the destination — either as a positional
- * copy (source chest N → destination chest N, overflow spilling forward) or
- * re-sorted by the shared {@link SortScheme}.
- *
- * <p>It assumes the player's inventory starts empty (it is a bulk carrier).
- */
 public final class MoverWorker {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritonemover/worker");
@@ -51,12 +42,11 @@ public final class MoverWorker {
     private boolean sourceScanned;
     private boolean destScanned;
 
-    private int srcIdx;            // current source chest
-    private boolean sourceEmptied; // did this TAKE fully empty the source chest?
-    private int putIdx;            // current destination chest in the PUT sweep
-    private int placedThisPut;     // items deposited this PUT (0 => destination is full)
+    private int srcIdx;
+    private boolean sourceEmptied;
+    private int putIdx;
+    private int placedThisPut;
 
-    // --- per-chest visit sub-state ---
     private enum Step { PATH, OPEN, ACT, CLOSE }
     private Step step = Step.PATH;
     private int ticksInStep;
@@ -67,8 +57,6 @@ public final class MoverWorker {
         this.config = config;
         this.scheme = scheme;
     }
-
-    // ------------------------------------------------------------- public API
 
     public boolean isRunning() {
         return state != MoverState.IDLE;
@@ -112,8 +100,6 @@ public final class MoverWorker {
         chat(mc, "§cStopped.");
     }
 
-    // ----------------------------------------------------------------- tick
-
     public void tick(Minecraft mc) {
         if (state == MoverState.IDLE) return;
 
@@ -139,8 +125,6 @@ public final class MoverWorker {
             default -> { }
         }
     }
-
-    // ----------------------------------------------------------- state logic
 
     private void setState(Minecraft mc, MoverState s) {
         state = s;
@@ -226,14 +210,12 @@ public final class MoverWorker {
         state = MoverState.PUT;
         ticksInState = 0;
         placedThisPut = 0;
-        // COPY targets the matching index (clamped); SORT sweeps from the start.
+
         putIdx = (config.mode == MoverConfig.Mode.COPY)
                 ? Math.min(srcIdx, destChests.size() - 1)
                 : 0;
         setStep(Step.PATH);
     }
-
-    // --------------------------------------------------------------- TAKE
 
     private void tickTake(Minecraft mc) {
         ticksInStep++;
@@ -248,14 +230,14 @@ public final class MoverWorker {
                 if (!(menu instanceof ChestMenu)) { setStep(Step.CLOSE); return; }
                 Inventory inv = mc.player.getInventory();
                 if (!ContainerService.hasFreePlayerSlot(menu) || ContainerService.freeSlots(inv) <= 0) {
-                    sourceEmptied = false;          // inventory full — come back for the rest
+                    sourceEmptied = false;
                     setStep(Step.CLOSE);
                     return;
                 }
                 int slot = ContainerService.firstNonEmptyContainerSlot(menu);
                 int bound = ContainerService.containerSlotCount(menu) + 40;
                 if (slot == -1 || actionClicks > bound) {
-                    sourceEmptied = (slot == -1);   // chest empty => this source chest is done
+                    sourceEmptied = (slot == -1);
                     setStep(Step.CLOSE);
                     return;
                 }
@@ -267,7 +249,7 @@ public final class MoverWorker {
                 closeMenu(mc);
                 boolean carrying = ContainerService.freeSlots(mc.player.getInventory()) < 36;
                 if (sourceEmptied && !carrying) {
-                    // nothing to deliver; move straight on to the next source chest
+
                     srcIdx++;
                     if (srcIdx >= sourceChests.size()) {
                         finish(mc, "Move complete.");
@@ -281,8 +263,6 @@ public final class MoverWorker {
             }
         }
     }
-
-    // --------------------------------------------------------------- PUT
 
     private void tickPut(Minecraft mc) {
         ticksInStep++;
@@ -303,7 +283,7 @@ public final class MoverWorker {
                 int bound = ContainerService.containerSlotCount(menu) + 40;
                 int slot;
                 if (config.mode == MoverConfig.Mode.COPY) {
-                    // No room here → spill forward to the next destination chest.
+
                     if (!ContainerService.hasEmptyContainerSlot(menu)) { setStep(Step.CLOSE); return; }
                     slot = ContainerService.nextDepositSlotMatching(menu, item -> true);
                 } else {
@@ -323,7 +303,7 @@ public final class MoverWorker {
                 closeMenu(mc);
                 putIdx++;
                 ticksInStep = 0;
-                // If everything's delivered, don't bother visiting the rest.
+
                 if (ContainerService.freeSlots(mc.player.getInventory()) >= 36) {
                     handlePutEnd(mc);
                 } else {
@@ -349,15 +329,12 @@ public final class MoverWorker {
         setState(mc, MoverState.GO_TO_SOURCE);
     }
 
-    /** First destination chest whose tags accept the item (SORT mode), or -1. */
     private int destTargetIndex(Item item) {
         for (int i = 0; i < destChests.size(); i++) {
             if (scheme.accepts(destChests.get(i).tags(), item)) return i;
         }
         return -1;
     }
-
-    // ------------------------------------------------------ shared visiting
 
     private void pathTo(Minecraft mc, BlockPos chest) {
         if (ticksInStep == 1) {
@@ -387,12 +364,11 @@ public final class MoverWorker {
         }
     }
 
-    /** A chest couldn't be reached/opened; advance past it in the current sweep. */
     private void skipChest(Minecraft mc) {
         if (state == MoverState.TAKE) {
-            sourceEmptied = true;   // give up on this source chest
+            sourceEmptied = true;
             setStep(Step.CLOSE);
-        } else { // PUT
+        } else {
             putIdx++;
             ticksInStep = 0;
             setStep(Step.PATH);
@@ -405,8 +381,6 @@ public final class MoverWorker {
         clickCooldown = 0;
         actionClicks = 0;
     }
-
-    // ------------------------------------------------------------- low level
 
     private void closeMenu(Minecraft mc) {
         if (mc.player != null && mc.player.containerMenu != mc.player.inventoryMenu) {

@@ -16,16 +16,10 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.Optional;
 
-/**
- * Low-level "hands" for a worker: aim the player at a block, right-click a chest
- * open, and forward container-slot clicks. Shared by every worker that services
- * chests so the rotation/interaction quirks live in one place.
- */
 public final class MenuActions {
 
     private MenuActions() {}
 
-    /** Aim at the chest and right-click it open. */
     public static void openChest(Minecraft mc, IBaritone baritone, BlockPos chest) {
         LocalPlayer p = mc.player;
         aimAt(mc, baritone, chest);
@@ -39,7 +33,6 @@ public final class MenuActions {
         p.swing(InteractionHand.MAIN_HAND);
     }
 
-    /** Point the player at a block's centre (and snap prev rotation for an instant hit). */
     public static void aimAt(Minecraft mc, IBaritone baritone, BlockPos pos) {
         LocalPlayer p = mc.player;
         IPlayerContext ctx = baritone.getPlayerContext();
@@ -52,7 +45,6 @@ public final class MenuActions {
         p.xRotO = p.getXRot();
     }
 
-    /** Forward a slot click to the server (deposit/withdraw/swap). */
     public static void click(Minecraft mc, AbstractContainerMenu menu, int slot, int button, ContainerInput input) {
         mc.gameMode.handleContainerInput(menu.containerId, slot, button, input, mc.player);
     }

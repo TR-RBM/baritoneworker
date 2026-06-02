@@ -10,15 +10,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 
-/**
- * Built-in item "category" keywords usable as sort tags (e.g. {@code ores},
- * {@code logs}, {@code food}). Each maps to a {@link Predicate} over items.
- *
- * <p>Categories lean on vanilla item tags where a clean one exists, and fall
- * back to registry-id heuristics otherwise (robust against missing tags and
- * modded items). They're a convenience: a sort scheme can always pin exact
- * item ids or define its own groups when a category is too broad or too narrow.
- */
 public final class ItemCategories {
 
     private ItemCategories() {}
@@ -39,7 +30,7 @@ public final class ItemCategories {
         CATS.put("redstone", ItemCategories::isRedstone);
         CATS.put("dyes", pathEndsWith("_dye"));
         CATS.put("building", ItemCategories::isBuilding);
-        CATS.put("misc", item -> true); // explicit catch-all
+        CATS.put("misc", item -> true);
     }
 
     public static boolean isCategory(String name) {
@@ -50,13 +41,10 @@ public final class ItemCategories {
         return CATS.keySet();
     }
 
-    /** True if {@code item} belongs to the named category (false for unknown names). */
     public static boolean matches(String name, Item item) {
         Predicate<Item> p = CATS.get(name);
         return p != null && p.test(item);
     }
-
-    // ----------------------------------------------------------- predicates
 
     private static Predicate<Item> tag(TagKey<Item> key) {
         return item -> item.builtInRegistryHolder().is(key);

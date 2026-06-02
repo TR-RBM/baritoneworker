@@ -19,72 +19,45 @@ import java.util.List;
 import java.util.Properties;
 import java.util.Set;
 
-/**
- * All tunable settings for the miner, plus the captured chest area. Persisted to
- * {@code config/baritoneworker/miner.properties} so they survive a restart.
- *
- * <p>The chest area is stored as a list of axis-aligned boxes (one per Baritone
- * selection that was captured), each as inclusive min/max corners.
- */
 public final class MinerConfig {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritoneworker/config");
 
-    /** Essentials-style home the worker teleports to for mining (default {@code mine}). */
     public String mineHome = "mine";
-    /** Essentials-style home where the chests live (default {@code Home}). */
+
     public String baseHome = "Home";
 
-    /** Which pickaxe to keep stocked / mine ore with. */
     public Item pickaxeItem = Items.DIAMOND_PICKAXE;
-    /** Which food to keep stocked (for a separate auto-eat mod). */
+
     public Item foodItem = Items.BAKED_POTATO;
 
-    /** Pickaxes to keep on hand; restock tops up to this. */
     public int targetPickaxes = 2;
-    /** Food items to keep on hand; restock tops up to this. */
+
     public int targetFood = 64;
 
-    /**
-     * Return to base once this many or fewer free slots remain in the main
-     * inventory (slots 0..35). 1 leaves a slot of headroom so the last mined
-     * stack still fits.
-     */
     public int stopAtFreeSlots = 1;
 
-    /**
-     * Teleport handling. {@code /home} on this server has a ~4s warm-up, so we
-     * don't act on a fixed timer — we wait until the player's position actually
-     * jumps by {@link #teleportMoveThreshold} blocks, then settle.
-     */
-    public int teleportTimeoutTicks = 200;      // give up waiting for the jump (already-there fallback)
-    public int teleportSettleTicks = 25;        // after the jump: let chunks/ground load
-    public double teleportMoveThreshold = 2.0;  // blocks of movement that count as "teleported"
+    public int teleportTimeoutTicks = 200;
+    public int teleportSettleTicks = 25;
+    public double teleportMoveThreshold = 2.0;
 
-    /** Skip a {@code /home} if already within this many blocks of the destination. */
     public double skipTeleportRange = 6.0;
-    /** Treat the player as "at base" if within this many blocks of the chest area. */
+
     public int chestAreaMargin = 8;
-    /** How far to probe each direction when picking the tunnel heading. */
+
     public int tunnelScanDepth = 256;
 
-    /** Cached landing spots so we can skip redundant teleports (null = unknown). */
     public int[] minePos;
     public int[] homePos;
-    /** Ticks between successive container clicks (server-friendly throttle). */
+
     public int clickDelayTicks = 3;
-    /** Ticks between the three RESET_HOME commands. */
+
     public int commandGapTicks = 15;
-    /** Max ticks to path to a single chest before giving up on it. */
+
     public int chestPathTimeoutTicks = 1200;
 
-    /** Extra item types to never deposit, on top of the pickaxe and food. */
     public final Set<Item> extraKeepItems = new LinkedHashSet<>(List.of(Items.TORCH));
 
-    /**
-     * Effective never-deposit set = pickaxe + food + extras. Rebuilt by
-     * {@link #rebuildKeep()} whenever those change; read directly by the worker.
-     */
     public final Set<Item> keepItems = new LinkedHashSet<>();
 
     public MinerConfig() {
@@ -108,26 +81,19 @@ public final class MinerConfig {
         rebuildKeep();
     }
 
-    // --- exposed-ore mining (while tunnelling) ---
-    /**
-     * Master toggle: detour to grab ore exposed in the tunnel walls. Off by
-     * default, so out of the box the worker tunnels exactly as before. Turn on
-     * with {@code #miner ore on}.
-     */
     public boolean mineExposedOres = false;
-    /** Skip an ore if any neighbouring block is lava or water. */
+
     public boolean avoidFluidBehindOre = true;
-    /** How far around the player to look for exposed ore. */
+
     public int oreScanRadius = 6;
-    /** Ticks between ore scans while tunnelling. */
+
     public int oreScanInterval = 10;
-    /** Ore groups to ignore (see {@link Ores}); empty = mine every ore. */
+
     public final Set<String> excludedOreGroups = new LinkedHashSet<>();
 
-    /** Captured chest-area boxes; each is {minX,minY,minZ,maxX,maxY,maxZ}. */
     public final List<int[]> chestBoxes = new ArrayList<>();
 
-    // ------------------------------------------------------------------ area
+    public boolean includeEnderChests = false;
 
     public void setArea(List<int[]> boxes) {
         chestBoxes.clear();
@@ -142,7 +108,6 @@ public final class MinerConfig {
         return !chestBoxes.isEmpty();
     }
 
-    /** True if {@code pos} lies inside any captured box. */
     public boolean areaContains(BlockPos pos) {
         int x = pos.getX(), y = pos.getY(), z = pos.getZ();
         for (int[] b : chestBoxes) {
@@ -152,8 +117,6 @@ public final class MinerConfig {
         }
         return false;
     }
-
-    // ----------------------------------------------------------- persistence
 
     private static Path file() {
         return FabricLoader.getInstance().getConfigDir().resolve("baritoneworker").resolve("miner.properties");
@@ -184,6 +147,7 @@ public final class MinerConfig {
         p.setProperty("oreScanRadius", Integer.toString(oreScanRadius));
         p.setProperty("oreScanInterval", Integer.toString(oreScanInterval));
         p.setProperty("excludedOreGroups", String.join(",", excludedOreGroups));
+        p.setProperty("includeEnderChests", Boolean.toString(includeEnderChests));
         p.setProperty("chestBoxes", serializeBoxes());
         try {
             Files.createDirectories(file().getParent());
@@ -233,6 +197,7 @@ public final class MinerConfig {
         for (String g : p.getProperty("excludedOreGroups", "").split(",")) {
             if (!g.isBlank() && Ores.isGroup(g.trim())) excludedOreGroups.add(g.trim());
         }
+        includeEnderChests = Boolean.parseBoolean(p.getProperty("includeEnderChests", Boolean.toString(includeEnderChests)));
         deserializeBoxes(p.getProperty("chestBoxes", ""));
         rebuildKeep();
     }
@@ -296,7 +261,7 @@ public final class MinerConfig {
                 for (int i = 0; i < 6; i++) b[i] = Integer.parseInt(parts[i].trim());
                 chestBoxes.add(b);
             } catch (NumberFormatException ignored) {
-                // skip malformed box
+
             }
         }
     }

@@ -23,14 +23,6 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * The stash sorter, driven once per client tick. Teleports to the chest room,
- * scans every chest and resolves its tags (from signs + the {@link SortScheme}
- * JSON), then organizes: it COLLECTs items sitting in the wrong chest into the
- * inventory, and DISTRIBUTEs them into the chest tagged for them — alternating
- * until a full pass moves nothing. Items with no matching chest are left where
- * they are.
- */
 public final class SorterWorker {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritonesorter/worker");
@@ -43,16 +35,14 @@ public final class SorterWorker {
     private int ticksInState;
     private IBaritone baritone;
 
-    /** A chest in the area and the tags resolved for it. */
     private record ChestInfo(BlockPos pos, List<String> tags) {}
 
     private final List<ChestInfo> chests = new ArrayList<>();
-    private int idx;                 // current chest in the active sweep
-    private int resumeCollectIdx;    // where to resume COLLECT after a DISTRIBUTE
-    private int collectedThisRound;  // items withdrawn this round (0 => converged)
+    private int idx;
+    private int resumeCollectIdx;
+    private int collectedThisRound;
     private int roundCount;
 
-    // --- per-chest visit sub-state ---
     private enum Step { PATH, OPEN, ACT, CLOSE }
     private Step step = Step.PATH;
     private int ticksInStep;
@@ -63,8 +53,6 @@ public final class SorterWorker {
         this.config = config;
         this.scheme = scheme;
     }
-
-    // ------------------------------------------------------------- public API
 
     public boolean isRunning() {
         return state != SortState.IDLE;
@@ -92,7 +80,7 @@ public final class SorterWorker {
             return;
         }
         baritone = null;
-        scheme.load(); // pick up edits made since last run
+        scheme.load();
         chat(mc, "§aStarted. home=§e" + config.home + "§a chests=§e" + config.chestBoxes.size() + " box(es)");
         setState(mc, SortState.GO_TO_HOME);
     }
@@ -104,8 +92,6 @@ public final class SorterWorker {
         ticksInState = 0;
         chat(mc, "§cStopped.");
     }
-
-    // ----------------------------------------------------------------- tick
 
     public void tick(Minecraft mc) {
         if (state == SortState.IDLE) return;
@@ -132,8 +118,6 @@ public final class SorterWorker {
         }
     }
 
-    // ----------------------------------------------------------- state logic
-
     private void setState(Minecraft mc, SortState s) {
         state = s;
         ticksInState = 0;
@@ -149,7 +133,7 @@ public final class SorterWorker {
                 sendCommand(mc, "home " + config.home);
             }
         }
-        // SCAN runs in tickScan; COLLECT/DISTRIBUTE are entered via startSweep.
+
     }
 
     private void tickGoToHome(Minecraft mc) {
@@ -198,7 +182,6 @@ public final class SorterWorker {
         setStep(Step.PATH);
     }
 
-    // visiting is identical for COLLECT and DISTRIBUTE except the ACT body
     private void tickVisit(Minecraft mc) {
         ticksInStep++;
 
@@ -250,10 +233,9 @@ public final class SorterWorker {
         }
     }
 
-    /** Pull items out of chest {@code idx} that belong in some other chest. */
     private void actCollect(Minecraft mc, AbstractContainerMenu menu) {
         Inventory inv = mc.player.getInventory();
-        // Inventory nearly full → empty it (a DISTRIBUTE sweep) then resume here.
+
         if (ContainerService.freeSlots(inv) <= config.collectBufferSlots) {
             resumeCollectIdx = idx;
             closeMenu(mc);
@@ -272,7 +254,6 @@ public final class SorterWorker {
         clickCooldown = config.clickDelayTicks;
     }
 
-    /** Put carried items into chest {@code idx} if it is their target chest. */
     private void actDistribute(Minecraft mc, AbstractContainerMenu menu) {
         int bound = ContainerService.containerSlotCount(menu) + 40;
         final int here = idx;
@@ -286,13 +267,11 @@ public final class SorterWorker {
         clickCooldown = config.clickDelayTicks;
     }
 
-    /** True if {@code item} sitting in the current chest belongs in a different one. */
     private boolean misplacedHere(Item item) {
         int t = targetIndex(item);
         return t != -1 && t != idx;
     }
 
-    /** Index of the first chest whose tags accept {@code item}, or -1 if none. */
     private int targetIndex(Item item) {
         for (int i = 0; i < chests.size(); i++) {
             if (scheme.accepts(chests.get(i).tags(), item)) return i;
@@ -302,7 +281,7 @@ public final class SorterWorker {
 
     private void handleCollectEnd(Minecraft mc) {
         if (hasPlaceable(mc)) {
-            resumeCollectIdx = chests.size(); // a full collect sweep is complete
+            resumeCollectIdx = chests.size();
             startSweep(mc, SortState.DISTRIBUTE, 0);
         } else if (collectedThisRound > 0 && roundCount < config.maxRounds) {
             roundCount++;
@@ -315,7 +294,7 @@ public final class SorterWorker {
 
     private void handleDistributeEnd(Minecraft mc) {
         if (resumeCollectIdx < chests.size()) {
-            startSweep(mc, SortState.COLLECT, resumeCollectIdx); // continue the paused sweep
+            startSweep(mc, SortState.COLLECT, resumeCollectIdx);
         } else if (collectedThisRound > 0 && roundCount < config.maxRounds) {
             roundCount++;
             collectedThisRound = 0;
@@ -361,8 +340,6 @@ public final class SorterWorker {
         actionClicks = 0;
     }
 
-    // ------------------------------------------------------------- low level
-
     private void closeMenu(Minecraft mc) {
         if (mc.player != null && mc.player.containerMenu != mc.player.inventoryMenu) {
             mc.player.closeContainer();
@@ -377,7 +354,6 @@ public final class SorterWorker {
         }
     }
 
-    /** Already inside the chest area (expanded by a margin) → no teleport needed. */
     private boolean alreadyAtArea(Minecraft mc) {
         if (!config.hasArea()) return false;
         int m = config.chestAreaMargin;

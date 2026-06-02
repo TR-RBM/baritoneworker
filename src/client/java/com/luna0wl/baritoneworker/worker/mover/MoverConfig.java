@@ -13,20 +13,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
-/**
- * Settings for the stash mover: the two {@code /home}s (source + destination),
- * the two captured areas, and the move {@link Mode}. Persisted to
- * {@code config/baritonemover.properties}.
- */
 public final class MoverConfig {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritonemover/config");
 
-    /** How carried items land at the destination. */
     public enum Mode {
-        /** Positional copy: source chest N → destination chest N (overflow spills forward). */
+
         COPY,
-        /** Re-sort at the destination using the shared sort scheme (signs + sortscheme.json). */
+
         SORT
     }
 
@@ -64,8 +58,6 @@ public final class MoverConfig {
     public boolean hasDest() {
         return !destBoxes.isEmpty();
     }
-
-    // ----------------------------------------------------------- persistence
 
     private static Path file() {
         return FabricLoader.getInstance().getConfigDir().resolve("baritoneworker").resolve("mover.properties");
@@ -111,7 +103,7 @@ public final class MoverConfig {
         try {
             mode = Mode.valueOf(p.getProperty("mode", mode.name()).trim().toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException ignored) {
-            // keep default
+
         }
         teleportTimeoutTicks = parseInt(p, "teleportTimeoutTicks", teleportTimeoutTicks);
         teleportSettleTicks = parseInt(p, "teleportSettleTicks", teleportSettleTicks);
@@ -166,7 +158,7 @@ public final class MoverConfig {
                 for (int i = 0; i < 6; i++) b[i] = Integer.parseInt(parts[i].trim());
                 out.add(b);
             } catch (NumberFormatException ignored) {
-                // skip malformed box
+
             }
         }
     }

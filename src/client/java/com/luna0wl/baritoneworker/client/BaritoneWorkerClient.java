@@ -29,35 +29,22 @@ import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Client entry point: loads each worker's config, registers the miner toggle
- * keybind and the per-tick driver, and installs the {@code #miner}, {@code #lumber},
- * {@code #sorter}, {@code #mover} and {@code #builder} Baritone commands once
- * Baritone and a world are available.
- *
- * <p>The workers are independent tick-driven state machines; idle ones are
- * no-ops. Run one at a time.
- */
 public class BaritoneWorkerClient implements ClientModInitializer {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritoneworker/client");
 
-    // --- miner ---
     private final MinerConfig minerConfig = new MinerConfig();
     private final MinerWorker miner = new MinerWorker(minerConfig);
 
-    // --- lumber ---
     private final LumberConfig lumberConfig = new LumberConfig();
     private final LumberWorker lumber = new LumberWorker(lumberConfig);
 
-    // --- sorter + mover share one sort scheme ---
     private final SortScheme scheme = new SortScheme();
     private final SorterConfig sorterConfig = new SorterConfig();
     private final SorterWorker sorter = new SorterWorker(sorterConfig, scheme);
     private final MoverConfig moverConfig = new MoverConfig();
     private final MoverWorker mover = new MoverWorker(moverConfig, scheme);
 
-    // --- builder ---
     private final BuilderConfig builderConfig = new BuilderConfig();
     private final BuilderWorker builder = new BuilderWorker(builderConfig);
 
@@ -91,7 +78,6 @@ public class BaritoneWorkerClient implements ClientModInitializer {
             builder.tick(mc);
         });
 
-        // Register the commands once Baritone is up and we've joined a world.
         ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> tryRegisterCommands());
 
         if (!Baritones.isLoaded()) {

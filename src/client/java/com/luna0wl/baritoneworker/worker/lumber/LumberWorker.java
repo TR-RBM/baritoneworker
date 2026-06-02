@@ -4,22 +4,20 @@ import baritone.api.IBaritone;
 import baritone.api.pathing.goals.GoalGetToBlock;
 import baritone.api.utils.RotationUtils;
 import com.luna0wl.baritoneworker.worker.common.Baritones;
+import com.luna0wl.baritoneworker.worker.common.ChestRoute;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
 import com.luna0wl.baritoneworker.worker.common.MenuActions;
 import com.luna0wl.baritoneworker.worker.common.Teleporter;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
-import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.BlockHitResult;
@@ -28,27 +26,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 
-/**
- * The autonomous lumber loop, driven once per client tick. Structurally a twin
- * of the miner: teleport to a forest home, run Baritone's {@code mine} on the
- * selected log types, and watch the inventory. When it fills, reset the work
- * home to the current spot ({@code delhome}/{@code sethome}, so the forest line
- * creeps forward), teleport to base, deposit logs, restock axe + food (+ saplings
- * when replanting), then head back out and repeat.
- *
- * <p>When replanting is enabled it pauses between trees to plant a held sapling
- * on cleared ground — a best-effort touch, not a precision tree farm.
- */
 public final class LumberWorker {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritonelumber/worker");
 
-    /** Soil blocks a sapling can be planted on. */
     private static final Set<Block> GROWABLE = Set.of(
             Blocks.DIRT, Blocks.GRASS_BLOCK, Blocks.COARSE_DIRT, Blocks.PODZOL,
             Blocks.ROOTED_DIRT, Blocks.MYCELIUM, Blocks.MUD, Blocks.MOSS_BLOCK,
@@ -56,46 +40,32 @@ public final class LumberWorker {
 
     private final LumberConfig config;
     private final Teleporter teleporter = new Teleporter();
+    private final ChestRoute chestRoute = new ChestRoute();
+    private final ChestRoute.Handler serviceHandler = new ServiceHandler();
 
     private LumberState state = LumberState.IDLE;
     private int ticksInState;
     private IBaritone baritone;
 
-    /** Ticks Baritone's mine has been idle during HARVEST (used to re-issue). */
     private int harvestIdleTicks;
 
-    // --- tree-at-a-time harvesting (inside HARVEST) ---
-    /** The selected flavours' log/wood blocks, for fast membership tests. */
     private final Set<Block> woodBlocks = new HashSet<>();
-    /** Packed positions of the tree currently being felled; empty = none locked. */
     private final Set<Long> currentTree = new HashSet<>();
-    private boolean returningToTree;   // walking back to a tree Baritone strayed from
-    private int treeSize;              // last seen currentTree size (for stuck detection)
-    private int treeStuckTicks;        // ticks the tree hasn't shrunk
-    /** Logs we gave up on (unreachable), so we don't re-lock onto them forever. */
+    private boolean returningToTree;
+    private int treeSize;
+    private int treeStuckTicks;
     private final Set<Long> logBlacklist = new HashSet<>();
 
-    // --- replant sub-state (inside HARVEST) ---
     private enum ReplantStep { GOTO, PLACE }
     private BlockPos replantSoil;
     private ReplantStep replantStep;
     private int replantStepTicks;
+    private int replantClickCooldown;
     private final Set<Long> replantBlacklist = new HashSet<>();
-
-    // --- chest servicing sub-state (identical shape to the miner) ---
-    private enum ChestStep { PATH, OPEN, DEPOSIT, WITHDRAW, CLOSE }
-    private final List<BlockPos> chestQueue = new ArrayList<>();
-    private int chestIndex;
-    private ChestStep chestStep = ChestStep.PATH;
-    private int ticksInStep;
-    private int clickCooldown;
-    private int actionClicks;
 
     public LumberWorker(LumberConfig config) {
         this.config = config;
     }
-
-    // ------------------------------------------------------------- public API
 
     public boolean isRunning() {
         return state != LumberState.IDLE;
@@ -128,6 +98,7 @@ public final class LumberWorker {
             return;
         }
         baritone = null;
+        chestRoute.abort();
         chat(mc, "§aStarted. workHome=§e" + config.workHome + "§a baseHome=§e" + config.baseHome
                 + "§a woods=§e" + (config.woodFlavours.isEmpty() ? "all" : String.join(",", config.woodFlavours))
                 + "§a replant=§e" + (config.replant ? "on" : "off"));
@@ -148,6 +119,7 @@ public final class LumberWorker {
     public void stop(Minecraft mc) {
         endReplant();
         cancelBaritone();
+        chestRoute.abort();
         if (mc.player != null && mc.player.containerMenu != mc.player.inventoryMenu) {
             mc.player.closeContainer();
         }
@@ -155,8 +127,6 @@ public final class LumberWorker {
         ticksInState = 0;
         chat(mc, "§cStopped.");
     }
-
-    // ----------------------------------------------------------------- tick
 
     public void tick(Minecraft mc) {
         if (state == LumberState.IDLE) return;
@@ -173,7 +143,7 @@ public final class LumberWorker {
         }
 
         ticksInState++;
-        if (clickCooldown > 0) clickCooldown--;
+        if (replantClickCooldown > 0) replantClickCooldown--;
 
         switch (state) {
             case GO_TO_WORK -> tickGoToWork(mc);
@@ -184,8 +154,6 @@ public final class LumberWorker {
             default -> { }
         }
     }
-
-    // ----------------------------------------------------------- state logic
 
     private void setState(Minecraft mc, LumberState s) {
         state = s;
@@ -256,17 +224,14 @@ public final class LumberWorker {
             return;
         }
 
-        // A replant already in progress owns movement until the spot is dealt with.
         if (config.replant && replantSoil != null) {
             handleReplant(mc);
             return;
         }
 
-        // Drop any logs of the current tree that have already been mined.
         pruneTree(mc);
 
         if (currentTree.isEmpty()) {
-            // Between trees: replant a sapling here (if enabled), else lock the next tree.
             if (config.replant && tryStartReplant(mc)) return;
             if (ticksInState % 10 == 0) {
                 BlockPos start = findNearestTree(mc);
@@ -275,11 +240,10 @@ public final class LumberWorker {
                     return;
                 }
             }
-            ensureMining(mc); // no tree in range — let Baritone roam to find one
+            ensureMining(mc);
             return;
         }
 
-        // Locked on a tree: stay on it until every one of its logs is gone.
         BlockPos target = nearestRemaining(mc);
         if (target == null) { currentTree.clear(); return; }
 
@@ -294,14 +258,11 @@ public final class LumberWorker {
             }
             ensureMining(mc);
         } else if (!returningToTree) {
-            // Baritone wandered to another tree while this one still has logs — go back.
             cancelBaritone();
             baritone.getCustomGoalProcess().setGoalAndPath(new GoalGetToBlock(target));
             returningToTree = true;
         }
 
-        // Stuck safety: if the remaining logs can't be cleared (too high/unreachable),
-        // blacklist them and move on so we never hang on one tree forever.
         if (currentTree.size() == treeSize) {
             if (++treeStuckTicks > Math.max(1, config.treeStuckTimeoutTicks)) {
                 for (long l : currentTree) blacklistLog(l);
@@ -317,7 +278,6 @@ public final class LumberWorker {
         }
     }
 
-    /** Keep Baritone's mine running; re-issue it if it goes idle for a while. */
     private void ensureMining(Minecraft mc) {
         boolean active = baritone.getMineProcess().isActive() || baritone.getPathingBehavior().isPathing();
         if (active) {
@@ -328,19 +288,15 @@ public final class LumberWorker {
         }
     }
 
-    // --------------------------------------------------- tree-at-a-time logic
-
     private boolean isWood(Minecraft mc, BlockPos p) {
         return mc.level.isLoaded(p) && woodBlocks.contains(mc.level.getBlockState(p).getBlock());
     }
 
-    /** Remove from the current tree any positions whose log has already been mined. */
     private void pruneTree(Minecraft mc) {
         if (currentTree.isEmpty()) return;
         currentTree.removeIf(l -> !isWood(mc, BlockPos.of(l)));
     }
 
-    /** Nearest selected-flavour log within the scan radius (skips blacklisted), or null. */
     private BlockPos findNearestTree(Minecraft mc) {
         if (woodBlocks.isEmpty()) return null;
         BlockPos feet = mc.player.blockPosition();
@@ -366,7 +322,6 @@ public final class LumberWorker {
         return best;
     }
 
-    /** Flood-fill the connected log/wood blocks of a tree (26-neighbour, to follow branches). */
     private void lockTree(Minecraft mc, BlockPos start) {
         currentTree.clear();
         ArrayDeque<BlockPos> queue = new ArrayDeque<>();
@@ -416,7 +371,6 @@ public final class LumberWorker {
         logBlacklist.add(packed);
     }
 
-    /** Try to begin a replant at a nearby spot; returns true if one was started. */
     private boolean tryStartReplant(Minecraft mc) {
         if (replantSoil != null) return false;
         if (!haveSapling(mc)) return false;
@@ -449,8 +403,6 @@ public final class LumberWorker {
         }
     }
 
-    // ------------------------------------------------------------- harvesting
-
     private void startMine() {
         cancelBaritone();
         Block[] targets = Woods.targetBlocks(config.woodFlavours);
@@ -459,17 +411,11 @@ public final class LumberWorker {
         }
     }
 
-    // ----------------------------------------------------------- replanting
-
     private boolean haveSapling(Minecraft mc) {
         Set<Item> wanted = config.woodFlavours.isEmpty() ? Woods.allSaplings() : Woods.saplings(config.woodFlavours);
         return ContainerService.countMatching(mc.player.getInventory(), wanted::contains) > 0;
     }
 
-    /**
-     * Nearest cleared soil within {@code replantRadius} that has air above and no
-     * adjacent log (so we don't plant inside a standing tree), or null.
-     */
     private BlockPos findReplantSpot(Minecraft mc) {
         BlockPos feet = mc.player.blockPosition();
         int r = config.replantRadius;
@@ -484,8 +430,8 @@ public final class LumberWorker {
                     if (!GROWABLE.contains(mc.level.getBlockState(m).getBlock())) continue;
                     if (replantBlacklist.contains(m.asLong())) continue;
                     BlockPos above = m.above();
-                    if (!passable(mc, above)) continue;          // room for the sapling
-                    if (hasLogNeighbour(mc, above)) continue;     // not under a standing tree
+                    if (!passable(mc, above)) continue;
+                    if (hasLogNeighbour(mc, above)) continue;
                     double d = feet.distSqr(m);
                     if (d < bestSq) {
                         bestSq = d;
@@ -515,7 +461,6 @@ public final class LumberWorker {
 
     private void handleReplant(Minecraft mc) {
         replantStepTicks++;
-        // Spot already filled (we planted, or something grew/fell there) → resume.
         if (!mc.level.getBlockState(replantSoil.above()).getCollisionShape(mc.level, replantSoil.above()).isEmpty()
                 || !GROWABLE.contains(mc.level.getBlockState(replantSoil).getBlock())) {
             finishReplant(mc);
@@ -533,15 +478,15 @@ public final class LumberWorker {
                 }
             }
             case PLACE -> {
-                if (!selectSapling(mc)) {           // ran out mid-pass
+                if (!selectSapling(mc)) {
                     finishReplant(mc);
                     return;
                 }
-                if (clickCooldown <= 0) {
+                if (replantClickCooldown <= 0) {
                     placeSapling(mc, replantSoil);
-                    clickCooldown = config.clickDelayTicks * 2;
+                    replantClickCooldown = config.clickDelayTicks * 2;
                 }
-                if (replantStepTicks > 60) {        // gave it a few tries — move on
+                if (replantStepTicks > 60) {
                     blacklistReplant(replantSoil);
                     finishReplant(mc);
                 }
@@ -553,7 +498,6 @@ public final class LumberWorker {
         replantSoil = null;
         replantStep = null;
         cancelBaritone();
-        // Mining/locking the next tree resumes on the following tick.
     }
 
     private void endReplant() {
@@ -566,7 +510,6 @@ public final class LumberWorker {
         replantBlacklist.add(pos.asLong());
     }
 
-    /** Right-click a held sapling onto the top face of the soil block. */
     private void placeSapling(Minecraft mc, BlockPos soil) {
         MenuActions.aimAt(mc, baritone, soil.above());
         Vec3 hitVec = new Vec3(soil.getX() + 0.5, soil.getY() + 1.0, soil.getZ() + 0.5);
@@ -575,7 +518,6 @@ public final class LumberWorker {
         mc.player.swing(InteractionHand.MAIN_HAND);
     }
 
-    /** Put any sapling for the selected flavours into the main hand; false if none. */
     private boolean selectSapling(Minecraft mc) {
         Inventory inv = mc.player.getInventory();
         Set<Item> wanted = config.woodFlavours.isEmpty() ? Woods.allSaplings() : Woods.saplings(config.woodFlavours);
@@ -597,102 +539,32 @@ public final class LumberWorker {
         return false;
     }
 
-    // ------------------------------------------------------- chest servicing
-
     private void enterServiceChests(Minecraft mc) {
-        chestQueue.clear();
-        chestIndex = 0;
-        chestStep = ChestStep.PATH;
-        ticksInStep = 0;
-        actionClicks = 0;
-        chestQueue.addAll(ContainerService.scanChests(mc.level, config.chestBoxes, mc.player.blockPosition()));
-        if (chestQueue.isEmpty()) {
+        int found = chestRoute.begin(mc, config.chestBoxes, config.includeEnderChests,
+                config.clickDelayTicks, config.chestPathTimeoutTicks, serviceHandler);
+        if (found == 0) {
             chat(mc, "§cNo chests found in the selected area — stopping.");
             stop(mc);
             return;
         }
-        chat(mc, "Found §e" + chestQueue.size() + "§r chest(s) to service.");
+        chat(mc, "Found §e" + found + "§r chest(s) to service.");
     }
 
     private void tickServiceChests(Minecraft mc) {
-        ticksInStep++;
-
-        if (chestIndex >= chestQueue.size()) {
-            finishService(mc);
-            return;
-        }
-        BlockPos chest = chestQueue.get(chestIndex);
-
-        switch (chestStep) {
-            case PATH -> {
-                if (ticksInStep == 1) {
-                    baritone.getCustomGoalProcess().setGoalAndPath(new GoalGetToBlock(chest));
-                }
-                if (RotationUtils.reachable(baritone.getPlayerContext(), chest).isPresent()) {
-                    cancelBaritone();
-                    setStep(ChestStep.OPEN);
-                } else if (ticksInStep > config.chestPathTimeoutTicks) {
-                    chat(mc, "§eCouldn't reach chest at " + chest.toShortString() + " — skipping.");
-                    cancelBaritone();
-                    nextChest();
-                }
+        switch (chestRoute.tick(mc, baritone)) {
+            case FINISHED -> finishService(mc);
+            case BLOCKED -> {
+                BlockPos blocked = chestRoute.blockedChest();
+                chat(mc, "§cCan't reach the chest at §e"
+                        + (blocked != null ? blocked.toShortString() : "?")
+                        + "§c without breaking blocks — stopping so no chest is skipped. "
+                        + "Clear a path to it (or move it), then restart.");
+                stop(mc);
             }
-            case OPEN -> {
-                AbstractContainerMenu menu = mc.player.containerMenu;
-                if (menu != mc.player.inventoryMenu && menu instanceof ChestMenu) {
-                    setStep(ChestStep.DEPOSIT);
-                } else if (clickCooldown <= 0) {
-                    MenuActions.openChest(mc, baritone, chest);
-                    clickCooldown = config.clickDelayTicks * 2;
-                    if (ticksInStep > 100) {
-                        chat(mc, "§eChest at " + chest.toShortString() + " wouldn't open — skipping.");
-                        nextChest();
-                    }
-                }
-            }
-            case DEPOSIT -> {
-                if (clickCooldown > 0) return;
-                AbstractContainerMenu menu = mc.player.containerMenu;
-                if (!(menu instanceof ChestMenu)) { setStep(ChestStep.CLOSE); return; }
-                int slot = ContainerService.nextDepositSlot(menu, config.keepItems);
-                int bound = ContainerService.containerSlotCount(menu) + 40;
-                if (slot == -1 || actionClicks > bound) {
-                    actionClicks = 0;
-                    setStep(ChestStep.WITHDRAW);
-                    return;
-                }
-                MenuActions.click(mc, menu, slot, 0, ContainerInput.QUICK_MOVE);
-                actionClicks++;
-                clickCooldown = config.clickDelayTicks;
-            }
-            case WITHDRAW -> {
-                if (clickCooldown > 0) return;
-                AbstractContainerMenu menu = mc.player.containerMenu;
-                if (!(menu instanceof ChestMenu)) { setStep(ChestStep.CLOSE); return; }
-                int bound = ContainerService.containerSlotCount(menu) + 40;
-                int slot = nextSupplyWithdrawSlot(mc, menu);
-                if (slot == -1 || actionClicks > bound) {
-                    actionClicks = 0;
-                    setStep(ChestStep.CLOSE);
-                    return;
-                }
-                MenuActions.click(mc, menu, slot, 0, ContainerInput.QUICK_MOVE);
-                actionClicks++;
-                clickCooldown = config.clickDelayTicks;
-            }
-            case CLOSE -> {
-                if (mc.player.containerMenu != mc.player.inventoryMenu) {
-                    mc.player.closeContainer();
-                }
-                nextChest();
-                if (!moreWorkToDo(mc)) {
-                    finishService(mc);
-                }
-            }
+            case RUNNING -> { }
         }
     }
 
-    /** Pick the next supply slot to pull from this chest: axe, then food, then saplings. */
     private int nextSupplyWithdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
         Inventory inv = mc.player.getInventory();
         if (config.targetAxes - ContainerService.countItem(inv, config.axeItem) > 0) {
@@ -720,11 +592,7 @@ public final class LumberWorker {
             Set<Item> saplings = Woods.saplings(config.woodFlavours);
             if (config.targetSaplings - ContainerService.countMatching(inv, saplings::contains) > 0) return true;
         }
-        for (int i = 0; i < 36; i++) {
-            ItemStack s = inv.getItem(i);
-            if (!s.isEmpty() && !config.keepItems.contains(s.getItem())) return true;
-        }
-        return false;
+        return ContainerService.hasDepositable(mc.player.inventoryMenu, config.keepItems);
     }
 
     private void finishService(Minecraft mc) {
@@ -740,19 +608,27 @@ public final class LumberWorker {
         setState(mc, LumberState.GO_TO_WORK);
     }
 
-    private void nextChest() {
-        chestIndex++;
-        setStep(ChestStep.PATH);
-    }
+    private final class ServiceHandler implements ChestRoute.Handler {
+        @Override
+        public int nextDepositSlot(Minecraft mc, AbstractContainerMenu menu) {
+            return ContainerService.nextDepositSlot(menu, config.keepItems);
+        }
 
-    private void setStep(ChestStep s) {
-        chestStep = s;
-        ticksInStep = 0;
-        clickCooldown = 0;
-        actionClicks = 0;
-    }
+        @Override
+        public int nextWithdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
+            return nextSupplyWithdrawSlot(mc, menu);
+        }
 
-    // ------------------------------------------------------------- low level
+        @Override
+        public boolean moreWorkToDo(Minecraft mc) {
+            return LumberWorker.this.moreWorkToDo(mc);
+        }
+
+        @Override
+        public void chat(String msg) {
+            LumberWorker.this.chat(Minecraft.getInstance(), msg);
+        }
+    }
 
     private void sendCommand(Minecraft mc, String command) {
         ClientPacketListener conn = mc.getConnection();

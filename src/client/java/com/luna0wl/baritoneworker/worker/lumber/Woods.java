@@ -12,19 +12,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Catalogue of overworld wood "flavours" the lumber worker can harvest. Each
- * flavour bundles its log + wood (bark) blocks — what Baritone is told to
- * {@code mine} — together with the sapling item used to replant it.
- */
 public final class Woods {
 
     private Woods() {}
 
-    /** One wood type: the blocks to mine, and the sapling to replant it with. */
     public record Flavour(String name, List<Block> blocks, Item sapling) {}
 
-    /** flavour name -> definition. */
     public static final Map<String, Flavour> FLAVOURS = new LinkedHashMap<>();
 
     static {
@@ -51,10 +44,6 @@ public final class Woods {
         return FLAVOURS.keySet();
     }
 
-    /**
-     * Blocks to feed Baritone's {@code mine} for the selected flavours. An empty
-     * selection means "every flavour".
-     */
     public static Block[] targetBlocks(Set<String> selected) {
         List<Block> out = new ArrayList<>();
         for (Flavour f : FLAVOURS.values()) {
@@ -65,7 +54,6 @@ public final class Woods {
         return out.toArray(new Block[0]);
     }
 
-    /** Sapling items for the selected flavours (empty selection = all). */
     public static Set<Item> saplings(Set<String> selected) {
         Set<Item> out = new LinkedHashSet<>();
         for (Flavour f : FLAVOURS.values()) {
@@ -76,7 +64,6 @@ public final class Woods {
         return out;
     }
 
-    /** Every known sapling/propagule item, regardless of selection. */
     public static Set<Item> allSaplings() {
         Set<Item> out = new LinkedHashSet<>();
         for (Flavour f : FLAVOURS.values()) out.add(f.sapling());

@@ -2,14 +2,12 @@ package com.luna0wl.baritoneworker.worker.builder;
 
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
-import baritone.api.pathing.goals.GoalGetToBlock;
 import baritone.api.schematic.IStaticSchematic;
 import baritone.api.schematic.format.ISchematicFormat;
-import baritone.api.utils.RotationUtils;
 import com.luna0wl.baritoneworker.worker.common.Baritones;
+import com.luna0wl.baritoneworker.worker.common.ChestRoute;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
 import com.luna0wl.baritoneworker.worker.common.ItemNames;
-import com.luna0wl.baritoneworker.worker.common.MenuActions;
 import com.luna0wl.baritoneworker.worker.common.Teleporter;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -19,8 +17,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.util.Tuple;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ChestMenu;
-import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
@@ -31,13 +27,9 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.InputStream;
 import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -49,16 +41,15 @@ public final class BuilderWorker {
 
     private Map<Item, Integer> required;
     private boolean warnedNoSchematic;
-    private final Set<BlockPos> visitedChests = new HashSet<>();
-    private int rescans;
     private BlockPos buildAnchor;
     private IStaticSchematic cachedSchematic;
     private boolean resuming;
-    private Boolean savedAllowBreak;
     private double maxForward;
 
     private final BuilderConfig config;
     private final Teleporter teleporter = new Teleporter();
+    private final ChestRoute chestRoute = new ChestRoute();
+    private final ChestRoute.Handler restockHandler = new RestockHandler();
 
     private BuilderState state = BuilderState.IDLE;
     private int ticksInState;
@@ -74,18 +65,10 @@ public final class BuilderWorker {
     private HomeStep homeStep = HomeStep.SETTLE;
     private int homeStepTicks;
 
-
     private int goToWorkRetries;
 
     private boolean workPosKnownThisSession;
 
-    private enum ChestStep { PATH, OPEN, WITHDRAW, CLOSE }
-    private final List<BlockPos> chestQueue = new ArrayList<>();
-    private int chestIndex;
-    private ChestStep chestStep = ChestStep.PATH;
-    private int ticksInStep;
-    private int clickCooldown;
-    private int actionClicks;
     private int blocksBeforeService;
 
     public BuilderWorker(BuilderConfig config) {
@@ -124,7 +107,7 @@ public final class BuilderWorker {
         goToWorkRetries = 0;
         workPosKnownThisSession = false;
         resuming = false;
-        restoreAllowBreak();
+        chestRoute.abort();
 
         fileOrigin = (config.hasSchematicFile() && config.buildOriginPos == null)
                 ? mc.player.blockPosition()
@@ -162,20 +145,13 @@ public final class BuilderWorker {
 
     public void stop(Minecraft mc) {
         cancelBaritone();
-        restoreAllowBreak();
+        chestRoute.abort();
         if (mc.player != null && mc.player.containerMenu != mc.player.inventoryMenu) {
             mc.player.closeContainer();
         }
         state = BuilderState.IDLE;
         ticksInState = 0;
         chat(mc, "§cStopped.");
-    }
-
-    private void restoreAllowBreak() {
-        if (savedAllowBreak != null) {
-            BaritoneAPI.getSettings().allowBreak.value = savedAllowBreak;
-            savedAllowBreak = null;
-        }
     }
 
     public void tick(Minecraft mc) {
@@ -193,7 +169,6 @@ public final class BuilderWorker {
         }
 
         ticksInState++;
-        if (clickCooldown > 0) clickCooldown--;
 
         switch (state) {
             case GO_TO_WORK -> tickGoToWork(mc);
@@ -603,104 +578,29 @@ public final class BuilderWorker {
     private record SchematicRef(IStaticSchematic schematic, BlockPos origin) {}
 
     private void enterServiceChests(Minecraft mc) {
-        chestQueue.clear();
-        chestIndex = 0;
-        chestStep = ChestStep.PATH;
-        ticksInStep = 0;
-        actionClicks = 0;
-        visitedChests.clear();
-        rescans = 0;
-        if (savedAllowBreak == null) {
-            savedAllowBreak = BaritoneAPI.getSettings().allowBreak.value;
-        }
-        BaritoneAPI.getSettings().allowBreak.value = false;
         blocksBeforeService = ContainerService.countMatching(mc.player.getInventory(), this::isMaterial);
-        chestQueue.addAll(ContainerService.scanChests(mc.level, config.chestBoxes, mc.player.blockPosition()));
-        if (chestQueue.isEmpty()) {
+        int found = chestRoute.begin(mc, config.chestBoxes, config.includeEnderChests,
+                config.clickDelayTicks, config.chestPathTimeoutTicks, restockHandler);
+        if (found == 0) {
             chat(mc, "§cNo chests found in the supply area — stopping.");
             stop(mc);
             return;
         }
-        chat(mc, "Found §e" + chestQueue.size() + "§r supply chest(s).");
+        chat(mc, "Found §e" + found + "§r supply chest(s).");
     }
 
     private void tickServiceChests(Minecraft mc) {
-        ticksInStep++;
-
-        if (chestIndex >= chestQueue.size()) {
-            if (moreWorkToDo(mc) && rescans < 6) {
-                if (ticksInStep < 20) return;
-                int before = chestQueue.size();
-                rescanForNewChests(mc);
-                if (chestQueue.size() > before) {
-                    rescans = 0;
-                    chat(mc, "Found more chests in the area — checking those (" + chestQueue.size() + " total).");
-                } else {
-                    rescans++;
-                }
-                setStep(ChestStep.PATH);
-                return;
+        switch (chestRoute.tick(mc, baritone)) {
+            case FINISHED -> finishService(mc);
+            case BLOCKED -> {
+                BlockPos blocked = chestRoute.blockedChest();
+                chat(mc, "§cCan't reach the chest at §e"
+                        + (blocked != null ? blocked.toShortString() : "?")
+                        + "§c without breaking blocks — stopping so no chest is skipped. "
+                        + "Clear a path to it (or move it), then restart.");
+                stop(mc);
             }
-            finishService(mc);
-            return;
-        }
-        BlockPos chest = chestQueue.get(chestIndex);
-        if (visitedChests.contains(chest)) {
-            nextChest();
-            return;
-        }
-
-        switch (chestStep) {
-            case PATH -> {
-                if (ticksInStep == 1) {
-                    baritone.getCustomGoalProcess().setGoalAndPath(new GoalGetToBlock(chest));
-                }
-                if (RotationUtils.reachable(baritone.getPlayerContext(), chest).isPresent()) {
-                    cancelBaritone();
-                    setStep(ChestStep.OPEN);
-                } else if (ticksInStep > config.chestPathTimeoutTicks) {
-                    chat(mc, "§eCouldn't reach chest at " + chest.toShortString() + " — skipping.");
-                    cancelBaritone();
-                    nextChest();
-                }
-            }
-            case OPEN -> {
-                AbstractContainerMenu menu = mc.player.containerMenu;
-                if (menu != mc.player.inventoryMenu && menu instanceof ChestMenu) {
-                    setStep(ChestStep.WITHDRAW);
-                } else if (clickCooldown <= 0) {
-                    MenuActions.openChest(mc, baritone, chest);
-                    clickCooldown = config.clickDelayTicks * 2;
-                    if (ticksInStep > 100) {
-                        chat(mc, "§eChest at " + chest.toShortString() + " wouldn't open — skipping.");
-                        nextChest();
-                    }
-                }
-            }
-            case WITHDRAW -> {
-                if (clickCooldown > 0) return;
-                AbstractContainerMenu menu = mc.player.containerMenu;
-                if (!(menu instanceof ChestMenu)) { setStep(ChestStep.CLOSE); return; }
-                int bound = ContainerService.containerSlotCount(menu) + 40;
-                int slot = nextSupplyWithdrawSlot(mc, menu);
-                if (slot == -1 || actionClicks > bound) {
-                    actionClicks = 0;
-                    setStep(ChestStep.CLOSE);
-                    return;
-                }
-                MenuActions.click(mc, menu, slot, 0, ContainerInput.QUICK_MOVE);
-                actionClicks++;
-                clickCooldown = config.clickDelayTicks;
-            }
-            case CLOSE -> {
-                if (mc.player.containerMenu != mc.player.inventoryMenu) {
-                    mc.player.closeContainer();
-                }
-                nextChest();
-                if (!moreWorkToDo(mc)) {
-                    finishService(mc);
-                }
-            }
+            case RUNNING -> { }
         }
     }
 
@@ -729,7 +629,7 @@ public final class BuilderWorker {
         int blocks = ContainerService.countMatching(inv, this::isMaterial);
         int food = ContainerService.countItem(inv, config.foodItem);
         if (blocks == 0) {
-            chat(mc, "§cChecked " + visitedChests.size() + " chest(s) but found none of the blocks the build needs ("
+            chat(mc, "§cChecked " + chestRoute.visitedCount() + " chest(s) but found none of the blocks the build needs ("
                     + neededSummary() + ") — stopping. Make sure those blocks are in the supply chests.");
             stop(mc);
             return;
@@ -739,29 +639,29 @@ public final class BuilderWorker {
         } else {
             chat(mc, "Restocked (blocks=" + blocks + ", food=" + food + "). Back to building.");
         }
-        restoreAllowBreak();
         setState(mc, BuilderState.GO_TO_WORK);
     }
 
-    private void nextChest() {
-        if (chestIndex < chestQueue.size()) visitedChests.add(chestQueue.get(chestIndex));
-        chestIndex++;
-        setStep(ChestStep.PATH);
-    }
-
-    private void rescanForNewChests(Minecraft mc) {
-        for (BlockPos p : ContainerService.scanChests(mc.level, config.chestBoxes, mc.player.blockPosition())) {
-            if (!chestQueue.contains(p) && !visitedChests.contains(p)) {
-                chestQueue.add(p);
-            }
+    private final class RestockHandler implements ChestRoute.Handler {
+        @Override
+        public int nextDepositSlot(Minecraft mc, AbstractContainerMenu menu) {
+            return -1;
         }
-    }
 
-    private void setStep(ChestStep s) {
-        chestStep = s;
-        ticksInStep = 0;
-        clickCooldown = 0;
-        actionClicks = 0;
+        @Override
+        public int nextWithdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
+            return nextSupplyWithdrawSlot(mc, menu);
+        }
+
+        @Override
+        public boolean moreWorkToDo(Minecraft mc) {
+            return BuilderWorker.this.moreWorkToDo(mc);
+        }
+
+        @Override
+        public void chat(String msg) {
+            BuilderWorker.this.chat(Minecraft.getInstance(), msg);
+        }
     }
 
     private void sendCommand(Minecraft mc, String command) {

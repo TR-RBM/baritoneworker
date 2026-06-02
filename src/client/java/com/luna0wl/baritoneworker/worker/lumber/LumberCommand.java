@@ -14,16 +14,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
 
-/**
- * The {@code #lumber} Baritone command — start/stop the lumber worker and tune
- * its settings. Mirrors {@code #miner}, but for wood: an axe instead of a
- * pickaxe, wood flavours instead of ore groups, and a replant toggle.
- */
 public final class LumberCommand extends Command {
 
     private static final List<String> SUBS = List.of(
             "start", "stop", "status", "area", "axe", "food", "wood",
-            "replant", "sapling", "freeslots", "work", "home", "save");
+            "replant", "sapling", "freeslots", "work", "home", "ender", "save");
 
     private final LumberWorker worker;
     private final LumberConfig config;
@@ -56,6 +51,7 @@ public final class LumberCommand extends Command {
                 case "freeslots" -> { config.stopAtFreeSlots = nextInt(args, config.stopAtFreeSlots); config.save(); logDirect("stopAtFreeSlots = " + config.stopAtFreeSlots); }
                 case "work" -> { config.workHome = args.getString(); config.save(); logDirect("workHome = " + config.workHome); }
                 case "home" -> { config.baseHome = args.getString(); config.save(); logDirect("baseHome = " + config.baseHome); }
+                case "ender" -> doEnder(args);
                 default -> logDirect("Unknown subcommand '" + sub + "'. Try: " + String.join(", ", SUBS));
             }
         } catch (Exception e) {
@@ -65,11 +61,6 @@ public final class LumberCommand extends Command {
 
     private enum Supply { AXE, FOOD, SAPLING }
 
-    /**
-     * {@code #lumber axe|food|sapling <n|item>} — a number sets how many to keep
-     * stocked; anything else is the item id to stock (axe/food only — saplings
-     * track the selected wood flavours automatically).
-     */
     private void doSupply(IArgConsumer args, Supply which) {
         String label = which.name().toLowerCase(Locale.ROOT);
         if (!args.hasAny()) {
@@ -127,17 +118,17 @@ public final class LumberCommand extends Command {
             return;
         }
         String g = args.getString().toLowerCase(Locale.ROOT);
-        // woodFlavours holds the *selected* set; empty = all flavours.
+
         if (g.equals("all")) {
-            if (include) config.woodFlavours.clear();                 // empty = every flavour
-            else config.woodFlavours.addAll(Woods.names());           // then exclude-all clears below
-            if (!include) config.woodFlavours.clear();                // exclude all = harvest nothing -> treat as none selected
+            if (include) config.woodFlavours.clear();
+            else config.woodFlavours.addAll(Woods.names());
+            if (!include) config.woodFlavours.clear();
         } else if (Woods.isFlavour(g)) {
-            // Materialise the explicit set the first time a single flavour is touched.
+
             if (config.woodFlavours.isEmpty() && !include) config.woodFlavours.addAll(Woods.names());
             if (include) config.woodFlavours.add(g);
             else config.woodFlavours.remove(g);
-            // Selecting every flavour individually == "all": normalise back to empty.
+
             if (config.woodFlavours.containsAll(Woods.names())) config.woodFlavours.clear();
         } else {
             logDirect("§cUnknown flavour '" + g + "'. Known: §e" + String.join(", ", Woods.names()));
@@ -198,6 +189,28 @@ public final class LumberCommand extends Command {
         }
     }
 
+    private void doEnder(IArgConsumer args) {
+        if (!args.hasAny()) {
+            logDirect("ender-chests = " + (config.includeEnderChests ? "§aon" : "§coff")
+                    + "§r — " + (config.includeEnderChests
+                        ? "ender chests in the area are serviced too."
+                        : "ender chests in the area are ignored."));
+            logDirect("Usage: §e#lumber ender on|off");
+            return;
+        }
+        String a = args.getString().toLowerCase(Locale.ROOT);
+        boolean on = a.equals("on") || a.equals("true") || a.equals("yes") || a.equals("1") || a.equals("include");
+        boolean off = a.equals("off") || a.equals("false") || a.equals("no") || a.equals("0") || a.equals("ignore");
+        if (!on && !off) {
+            logDirect("Usage: §e#lumber ender on|off");
+            return;
+        }
+        config.includeEnderChests = on;
+        config.save();
+        logDirect("ender-chests = " + (on ? "§aon§r — will also service ender chests."
+                : "§coff§r — ender chests are ignored."));
+    }
+
     private int nextInt(IArgConsumer args, int fallback) {
         if (!args.hasAny()) return fallback;
         try {
@@ -216,7 +229,8 @@ public final class LumberCommand extends Command {
         logDirect(" woods=§e" + harvested());
         logDirect(" replant=" + (config.replant ? "§aON" : "§cOFF") + "§r×" + config.targetSaplings + "§r (#lumber replant)");
         logDirect(" chestArea=§e" + config.chestBoxes.size() + "§r box(es)"
-                + (config.hasArea() ? "" : " §c(not set — run #lumber area)"));
+                + (config.hasArea() ? "" : " §c(not set — run #lumber area)")
+                + "§r enderChests=" + (config.includeEnderChests ? "§aon" : "§coff"));
     }
 
     @Override
@@ -253,7 +267,8 @@ public final class LumberCommand extends Command {
                 "> lumber replant on|off - replant saplings on cleared ground (default off)",
                 "> lumber sapling <n> - how many saplings to keep when replanting (default 16)",
                 "> lumber freeslots <n> - return to base at this many free slots (default 1)",
-                "> lumber work <name> / lumber home <name> - home names"
+                "> lumber work <name> / lumber home <name> - home names",
+                "> lumber ender on|off - also service ender chests in the area (default off)"
         );
     }
 }

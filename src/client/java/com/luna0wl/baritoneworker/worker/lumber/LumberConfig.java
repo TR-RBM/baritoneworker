@@ -19,33 +19,23 @@ import java.util.List;
 import java.util.Properties;
 import java.util.Set;
 
-/**
- * Settings for the lumber worker, plus the captured chest area. Persisted to
- * {@code config/baritonelumber.properties}. Mirrors the miner's config but for
- * wood: an axe instead of a pickaxe, selected wood flavours instead of ore
- * groups, and an optional sapling-replant toggle.
- */
 public final class LumberConfig {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritonelumber/config");
 
-    /** Essentials-style home the worker teleports to for chopping (default {@code wood}). */
     public String workHome = "wood";
-    /** Essentials-style home where the chests live (default {@code Home}). */
+
     public String baseHome = "Home";
 
-    /** Which axe to keep stocked / chop with. */
     public Item axeItem = Items.DIAMOND_AXE;
-    /** Which food to keep stocked (for a separate auto-eat mod). */
+
     public Item foodItem = Items.BAKED_POTATO;
 
     public int targetAxes = 1;
     public int targetFood = 64;
 
-    /** Return to base once this many or fewer free slots remain (0..35). */
     public int stopAtFreeSlots = 1;
 
-    // --- teleport handling (same warm-up dance as the miner) ---
     public int teleportTimeoutTicks = 200;
     public int teleportSettleTicks = 25;
     public double teleportMoveThreshold = 2.0;
@@ -53,7 +43,6 @@ public final class LumberConfig {
     public double skipTeleportRange = 6.0;
     public int chestAreaMargin = 8;
 
-    /** Cached landing spots so we can skip redundant teleports (null = unknown). */
     public int[] workPos;
     public int[] homePos;
 
@@ -61,36 +50,30 @@ public final class LumberConfig {
     public int commandGapTicks = 15;
     public int chestPathTimeoutTicks = 1200;
 
-    /** Ticks Baritone's mine may sit idle before we re-issue it. */
     public int harvestIdleReissueTicks = 60;
 
-    // --- optional sapling replant ---
-    /** Master toggle: replant a sapling on cleared ground between trees. Off by default. */
     public boolean replant = false;
-    /** Saplings to keep on hand when replanting; restock tops up to this. */
+
     public int targetSaplings = 16;
-    /** How far around the player to look for a spot to replant. */
+
     public int replantRadius = 8;
-    /** Ticks between replant scans while harvesting. */
+
     public int replantScanInterval = 20;
 
-    // --- tree-at-a-time harvesting ---
-    /** How far to look for the next tree to fell. */
     public int treeScanRadius = 24;
-    /** Stay within this many blocks of the current tree until every log is gone. */
+
     public int treeFollowRadius = 10;
-    /** Give up on a tree's remaining (unreachable) logs after this many idle ticks. */
+
     public int treeStuckTimeoutTicks = 400;
-    /** Flood-fill cap when collecting one tree's connected log/wood blocks. */
+
     public int maxTreeBlocks = 512;
 
-    /** Selected wood flavours (see {@link Woods}); empty = every flavour. */
     public final Set<String> woodFlavours = new LinkedHashSet<>();
 
-    /** Captured chest-area boxes; each is {minX,minY,minZ,maxX,maxY,maxZ}. */
     public final List<int[]> chestBoxes = new ArrayList<>();
 
-    /** Effective never-deposit set = axe + food + (saplings, if replanting). */
+    public boolean includeEnderChests = false;
+
     public final Set<Item> keepItems = new LinkedHashSet<>();
 
     public LumberConfig() {
@@ -119,8 +102,6 @@ public final class LumberConfig {
         rebuildKeep();
     }
 
-    // ------------------------------------------------------------------ area
-
     public void setArea(List<int[]> boxes) {
         chestBoxes.clear();
         chestBoxes.addAll(boxes);
@@ -133,8 +114,6 @@ public final class LumberConfig {
     public boolean hasArea() {
         return !chestBoxes.isEmpty();
     }
-
-    // ----------------------------------------------------------- persistence
 
     private static Path file() {
         return FabricLoader.getInstance().getConfigDir().resolve("baritoneworker").resolve("lumber.properties");
@@ -167,6 +146,7 @@ public final class LumberConfig {
         p.setProperty("treeStuckTimeoutTicks", Integer.toString(treeStuckTimeoutTicks));
         p.setProperty("maxTreeBlocks", Integer.toString(maxTreeBlocks));
         p.setProperty("woodFlavours", String.join(",", woodFlavours));
+        p.setProperty("includeEnderChests", Boolean.toString(includeEnderChests));
         p.setProperty("workPos", serializePos(workPos));
         p.setProperty("homePos", serializePos(homePos));
         p.setProperty("chestBoxes", serializeBoxes());
@@ -220,6 +200,7 @@ public final class LumberConfig {
         for (String g : p.getProperty("woodFlavours", "").split(",")) {
             if (!g.isBlank() && Woods.isFlavour(g.trim())) woodFlavours.add(g.trim());
         }
+        includeEnderChests = Boolean.parseBoolean(p.getProperty("includeEnderChests", Boolean.toString(includeEnderChests)));
         workPos = deserializePos(p.getProperty("workPos", ""));
         homePos = deserializePos(p.getProperty("homePos", ""));
         deserializeBoxes(p.getProperty("chestBoxes", ""));
@@ -285,7 +266,7 @@ public final class LumberConfig {
                 for (int i = 0; i < 6; i++) b[i] = Integer.parseInt(parts[i].trim());
                 chestBoxes.add(b);
             } catch (NumberFormatException ignored) {
-                // skip malformed box
+
             }
         }
     }

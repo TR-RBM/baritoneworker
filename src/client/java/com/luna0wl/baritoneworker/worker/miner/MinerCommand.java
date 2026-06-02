@@ -14,16 +14,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
 
-/**
- * The {@code #miner} Baritone command — start/stop the worker and tune its
- * settings. Registered into Baritone's own command registry so it lives under
- * the familiar {@code #} prefix.
- */
 public final class MinerCommand extends Command {
 
     private static final List<String> SUBS = List.of(
             "start", "stop", "status", "area", "pickaxe", "pickaxes", "food",
-            "freeslots", "mine", "home", "ore", "save");
+            "freeslots", "mine", "home", "ore", "ender", "save");
 
     private final MinerWorker worker;
     private final MinerConfig config;
@@ -54,6 +49,7 @@ public final class MinerCommand extends Command {
                 case "mine" -> { config.mineHome = args.getString(); config.save(); logDirect("mineHome = " + config.mineHome); }
                 case "home" -> { config.baseHome = args.getString(); config.save(); logDirect("baseHome = " + config.baseHome); }
                 case "ore" -> doOre(args);
+                case "ender" -> doEnder(args);
                 default -> logDirect("Unknown subcommand '" + sub + "'. Try: " + String.join(", ", SUBS));
             }
         } catch (Exception e) {
@@ -61,11 +57,6 @@ public final class MinerCommand extends Command {
         }
     }
 
-    /**
-     * {@code #miner pickaxe|food <n|item>} — a number sets how many to keep
-     * stocked, anything else is treated as the item id to stock (e.g.
-     * {@code netherite_pickaxe}, {@code cooked_beef}).
-     */
     private void doSupply(IArgConsumer args, boolean pickaxe) {
         String label = pickaxe ? "pickaxe" : "food";
         if (!args.hasAny()) {
@@ -184,6 +175,28 @@ public final class MinerCommand extends Command {
         }
     }
 
+    private void doEnder(IArgConsumer args) {
+        if (!args.hasAny()) {
+            logDirect("ender-chests = " + (config.includeEnderChests ? "§aon" : "§coff")
+                    + "§r — " + (config.includeEnderChests
+                        ? "ender chests in the area are serviced too."
+                        : "ender chests in the area are ignored."));
+            logDirect("Usage: §e#miner ender on|off");
+            return;
+        }
+        String a = args.getString().toLowerCase(Locale.ROOT);
+        boolean on = a.equals("on") || a.equals("true") || a.equals("yes") || a.equals("1") || a.equals("include");
+        boolean off = a.equals("off") || a.equals("false") || a.equals("no") || a.equals("0") || a.equals("ignore");
+        if (!on && !off) {
+            logDirect("Usage: §e#miner ender on|off");
+            return;
+        }
+        config.includeEnderChests = on;
+        config.save();
+        logDirect("ender-chests = " + (on ? "§aon§r — will also service ender chests."
+                : "§coff§r — ender chests are ignored."));
+    }
+
     private int nextInt(IArgConsumer args, int fallback) {
         if (!args.hasAny()) return fallback;
         try {
@@ -201,7 +214,8 @@ public final class MinerCommand extends Command {
                 + "§r  stopAtFreeSlots=§e" + config.stopAtFreeSlots);
         logDirect(" chestArea=§e" + config.chestBoxes.size() + "§r box(es)"
                 + (config.hasArea() ? "" : " §c(not set — run #miner area)"));
-        logDirect(" exposedOreMining=" + (config.mineExposedOres ? "§aON" : "§cOFF") + "§r (#miner ore)");
+        logDirect(" exposedOreMining=" + (config.mineExposedOres ? "§aON" : "§cOFF") + "§r (#miner ore)"
+                + "§r enderChests=" + (config.includeEnderChests ? "§aon" : "§coff"));
     }
 
     @Override
@@ -238,6 +252,7 @@ public final class MinerCommand extends Command {
                 "> miner food <item> - which food (e.g. cooked_beef)",
                 "> miner freeslots <n> - return to base at this many free slots (default 1)",
                 "> miner mine <name> / miner home <name> - home names",
+                "> miner ender on|off - also service ender chests in the area (default off)",
                 "",
                 "Exposed-ore mining (optional, off by default):",
                 "> miner ore on|off - detour to grab ore exposed in the tunnel walls",

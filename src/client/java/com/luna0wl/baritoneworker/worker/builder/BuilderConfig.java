@@ -63,6 +63,8 @@ public final class BuilderConfig {
 
     public final List<int[]> chestBoxes = new ArrayList<>();
 
+    public boolean includeEnderChests = false;
+
     public void setFoodItem(Item item) {
         foodItem = item;
     }
@@ -119,6 +121,7 @@ public final class BuilderConfig {
         p.setProperty("resumeGraceTicks", Integer.toString(resumeGraceTicks));
         p.setProperty("workPos", serializePos(workPos));
         p.setProperty("homePos", serializePos(homePos));
+        p.setProperty("includeEnderChests", Boolean.toString(includeEnderChests));
         p.setProperty("chestBoxes", serializeBoxes());
         try {
             Files.createDirectories(file().getParent());
@@ -166,6 +169,7 @@ public final class BuilderConfig {
         resumeGraceTicks = parseInt(p, "resumeGraceTicks", resumeGraceTicks);
         workPos = deserializePos(p.getProperty("workPos", ""));
         homePos = deserializePos(p.getProperty("homePos", ""));
+        includeEnderChests = Boolean.parseBoolean(p.getProperty("includeEnderChests", Boolean.toString(includeEnderChests)));
         deserializeBoxes(p.getProperty("chestBoxes", ""));
     }
 

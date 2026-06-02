@@ -12,10 +12,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
 
-/**
- * The {@code #mover} Baritone command — capture the two areas/homes, pick the
- * move mode, and start/stop the worker.
- */
 public final class MoverCommand extends Command {
 
     private static final List<String> SUBS = List.of(
@@ -53,11 +49,6 @@ public final class MoverCommand extends Command {
         }
     }
 
-    /**
-     * {@code #mover source|dest} captures the current selection as that area;
-     * {@code #mover source|dest home <name>} sets that endpoint's home;
-     * {@code #mover source|dest clear} forgets the area.
-     */
     private void doEndpoint(IArgConsumer args, boolean source) {
         String which = source ? "source" : "dest";
         if (args.hasAny()) {

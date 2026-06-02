@@ -13,16 +13,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
-/**
- * Settings for the stash sorter: the chest-room {@code /home}, the captured
- * area, and shared tunables. Persisted to {@code config/baritonesorter.properties}.
- * The actual item→chest scheme lives in {@link SortScheme} (a separate JSON).
- */
 public final class SorterConfig {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritonesorter/config");
 
-    /** Essentials-style home by the chest room. */
     public String home = "Home";
 
     public int teleportTimeoutTicks = 200;
@@ -33,12 +27,11 @@ public final class SorterConfig {
 
     public int clickDelayTicks = 3;
     public int chestPathTimeoutTicks = 1200;
-    /** Leave at least this many free inventory slots while collecting. */
+
     public int collectBufferSlots = 4;
-    /** Safety cap on collect/distribute rounds. */
+
     public int maxRounds = 64;
 
-    /** Captured chest-area boxes; each is {minX,minY,minZ,maxX,maxY,maxZ}. */
     public final List<int[]> chestBoxes = new ArrayList<>();
 
     public void setArea(List<int[]> boxes) {
@@ -53,8 +46,6 @@ public final class SorterConfig {
     public boolean hasArea() {
         return !chestBoxes.isEmpty();
     }
-
-    // ----------------------------------------------------------- persistence
 
     private static Path file() {
         return FabricLoader.getInstance().getConfigDir().resolve("baritoneworker").resolve("sorter.properties");
@@ -147,7 +138,7 @@ public final class SorterConfig {
                 for (int i = 0; i < 6; i++) b[i] = Integer.parseInt(parts[i].trim());
                 chestBoxes.add(b);
             } catch (NumberFormatException ignored) {
-                // skip malformed box
+
             }
         }
     }

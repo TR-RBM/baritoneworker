@@ -60,6 +60,14 @@ folder alongside Baritone.
   timer.
 - **Kept items** are never deposited (the miner keeps its pickaxe/food/torches,
   the lumber bot its axe/food/saplings). Armor and the off-hand are never touched.
+- **Restocking is wall-safe and never skips a chest.** While a worker services its
+  supply chests it temporarily disables Baritone's block-breaking, so it won't tear
+  through walls to reach a chest. It also won't quietly skip one: if a chest genuinely
+  can't be reached without breaking blocks, the worker retries and then **stops and
+  tells you which chest to clear**, rather than moving past it. **Ender chests** are
+  ignored by default — turn them on per worker with `ender on` (e.g. `#miner ender on`).
+  The miner, lumber and builder share one chest-finding/restock module
+  (`common/ChestRoute`), so the same behaviour applies to all three.
 - Settings persist under `config/baritoneworker/` (`builder.properties`,
   `miner.properties`, `lumber.properties`, `sorter.properties`, `mover.properties`,
   `sortscheme.json`).
@@ -84,6 +92,7 @@ Mine → tunnel → return when full → deposit + restock → repeat.
 | `#miner food <n\|item>` | how much / which food to keep (default `64`, `baked_potato`) |
 | `#miner freeslots <n>` | return to base at this many free slots (default `1`) |
 | `#miner mine <name>` / `home <name>` | home names |
+| `#miner ender on\|off` | also service ender chests in the area (default off) |
 | `#miner ore on\|off` | also grab ore exposed in the tunnel walls (off by default) |
 | `#miner ore exclude\|include <group>` | e.g. `exclude coal` (bundles deepslate) |
 
@@ -115,6 +124,7 @@ when replanting).
 | `#lumber sapling <n>` | saplings to keep when replanting (default `16`) |
 | `#lumber freeslots <n>` | return to base at this many free slots (default `1`) |
 | `#lumber work <name>` / `home <name>` | home names |
+| `#lumber ender on\|off` | also service ender chests in the area (default off) |
 
 Flavours: `oak birch spruce jungle acacia dark_oak mangrove cherry pale_oak`.
 
@@ -224,6 +234,7 @@ a `stopat` target is reached, or the supply runs out.
 | `#builder stopat here \| <x> <y> <z> \| radius <n> \| clear` | stop when the player reaches this spot |
 | `#builder sethome on\|off` | move the `build` home to where it stops each trip (default **off**) |
 | `#builder builds <n\|infinite>` | `buildRepeat`: builds' worth of materials to carry per trip (default `1`) |
+| `#builder ender on\|off` | also restock from ender chests in the supply area (default off) |
 | `#builder <file.litematic>` | shortcut: set the file **and** start, like `#build` |
 
 ### Recipe-aware restocking
@@ -264,7 +275,10 @@ this on only if your build crawls far from the start and you want the home to fo
 > mid-air on the structure. Leave it **off** unless you specifically need the home to
 > track a far-roaming build.
 
-The builder **only withdraws** (food + needed blocks) and never dumps your inventory.
+The builder **only withdraws** (food + needed blocks) and never dumps your inventory. When
+restocking it won't break walls to reach a chest and never skips one — see
+**Shared concepts** above. To also pull from ender chests in the supply room, use
+`#builder ender on`.
 
 ---
 
@@ -280,7 +294,7 @@ The builder **only withdraws** (food + needed blocks) and never dumps your inven
 src/client/java/com/luna0wl/baritoneworker/
 ├── client/BaritoneWorkerClient.java   # init: keybind, tick driver, command registration
 └── worker/
-    ├── common/   # Baritones, Teleporter, MenuActions, ContainerService, ItemNames, ItemCategories
+    ├── common/   # Baritones, Teleporter, MenuActions, ContainerService, ChestRoute, ItemNames, ItemCategories
     ├── miner/    # MinerWorker, MinerConfig, MinerCommand, MinerState, Ores
     ├── lumber/   # LumberWorker, LumberConfig, LumberCommand, LumberState, Woods
     ├── sorter/   # SorterWorker, SorterConfig, SorterCommand, SortState, SortScheme
