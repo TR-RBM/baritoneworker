@@ -9,7 +9,7 @@ Five autonomous Baritone workers for **MC 26.1.2** (Fabric): **miner**, **lumber
 
 ## Install
 Build with `JAVA_HOME=<jdk-25> ./gradlew build`, then drop
-`build/libs/baritoneworker-1.3.0.jar` into your `mods/` folder next to Baritone.
+`build/libs/baritoneworker-1.3.1.jar` into your `mods/` folder next to Baritone.
 
 ## Shared setup
 - Capture an area the mod's own way: stand on one corner and run the worker's
@@ -28,12 +28,14 @@ Build with `JAVA_HOME=<jdk-25> ./gradlew build`, then drop
 ## Miner
 1. `/sethome mine` at the tunnel face, looking down the tunnel; `/sethome Home` by the chests.
 2. `#miner corner1`/`corner2` on the chest room corners. Stock pickaxes + shovels + food.
-3. `\` (backslash) or `#miner start`. Optional: `#miner ore on` to grab wall ore.
+3. `\` (backslash) or `#miner start`. Optional: `#miner ore on` to grab wall ore,
+   `#miner sorter on` to deposit each item into its tagged chest (signs/sortscheme).
 
 ## Lumber
 1. `/sethome wood` in the forest; `/sethome Home` by the chests.
 2. `#lumber corner1`/`corner2` on the chest room corners. Stock axes + food.
-3. `#lumber start`. Pick types with `#lumber wood exclude <flavour>`; replant with `#lumber replant on`.
+3. `#lumber start`. Pick types with `#lumber wood exclude <flavour>`; replant with `#lumber replant on`;
+   deposit into tagged chests with `#lumber sorter on`.
 
 ## Sorter
 1. `/sethome Home` by the chest room; `#sorter corner1`/`corner2` on its corners.

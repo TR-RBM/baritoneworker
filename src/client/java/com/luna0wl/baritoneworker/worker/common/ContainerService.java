@@ -25,7 +25,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import java.util.function.Predicate;
 
 public final class ContainerService {
@@ -201,17 +200,6 @@ public final class ContainerService {
         return menu.slots.size() - 36;
     }
 
-    public static int nextDepositSlot(AbstractContainerMenu menu, Set<Item> keep) {
-        int container = containerSlotCount(menu);
-        for (int i = container; i < menu.slots.size(); i++) {
-            ItemStack s = menu.slots.get(i).getItem();
-            if (!s.isEmpty() && !keep.contains(s.getItem())) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     public static int nextDepositSlotMatching(AbstractContainerMenu menu, Predicate<Item> shouldDeposit) {
         int container = containerSlotCount(menu);
         for (int i = container; i < menu.slots.size(); i++) {
@@ -221,10 +209,6 @@ public final class ContainerService {
             }
         }
         return -1;
-    }
-
-    public static boolean hasDepositable(AbstractContainerMenu menu, Set<Item> keep) {
-        return nextDepositSlot(menu, keep) != -1;
     }
 
     public static int nextWithdrawSlot(AbstractContainerMenu menu, Item want) {

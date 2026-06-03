@@ -81,12 +81,6 @@ public final class ChestRoute {
     private Boolean savedAllowBreak;
 
     public int begin(Minecraft mc, List<int[]> boxes, boolean includeEnderChests,
-                     int clickDelayTicks, int chestPathTimeoutTicks, boolean rescanForMore, Handler handler) {
-        return begin(mc, boxes, includeEnderChests, clickDelayTicks, chestPathTimeoutTicks,
-                rescanForMore, Mode.DEPOSIT_WITHDRAW, handler);
-    }
-
-    public int begin(Minecraft mc, List<int[]> boxes, boolean includeEnderChests,
                      int clickDelayTicks, int chestPathTimeoutTicks, boolean rescanForMore,
                      Mode mode, Handler handler) {
         this.handler = handler;
@@ -154,6 +148,10 @@ public final class ChestRoute {
 
     public BlockPos blockedChest() {
         return blockedChest;
+    }
+
+    public BlockPos currentChest() {
+        return index >= 0 && index < queue.size() ? queue.get(index) : null;
     }
 
     public int visitedCount() {

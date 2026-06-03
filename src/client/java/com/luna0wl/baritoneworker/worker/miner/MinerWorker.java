@@ -9,8 +9,10 @@ import com.luna0wl.baritoneworker.worker.common.DebugLog;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
 import com.luna0wl.baritoneworker.worker.common.ItemCategories;
 import com.luna0wl.baritoneworker.worker.common.MenuActions;
+import com.luna0wl.baritoneworker.worker.common.SortPlan;
 import com.luna0wl.baritoneworker.worker.common.Teleporter;
 import com.luna0wl.baritoneworker.worker.common.WorkerEquip;
+import com.luna0wl.baritoneworker.worker.sorter.SortScheme;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.player.LocalPlayer;
@@ -36,6 +38,7 @@ public final class MinerWorker {
     private final Teleporter teleporter = new Teleporter();
     private final ChestRoute chestRoute = new ChestRoute();
     private final ChestRoute.Handler serviceHandler = new ServiceHandler();
+    private final SortPlan sortPlan;
 
     private MinerState state = MinerState.IDLE;
     private int ticksInState;
@@ -54,8 +57,9 @@ public final class MinerWorker {
     private int oreStepTicks;
     private final Set<Long> oreBlacklist = new HashSet<>();
 
-    public MinerWorker(MinerConfig config) {
+    public MinerWorker(MinerConfig config, SortScheme scheme) {
         this.config = config;
+        this.sortPlan = new SortPlan(scheme);
     }
 
     public boolean isRunning() {
@@ -275,10 +279,13 @@ public final class MinerWorker {
         serviceMode = mode;
         serviceCacheKey = cacheKey;
         serviceBoxes = boxes;
+        sortPlan.build(mc, boxes, config.includeEnderChests,
+                config.useSorter && mode != ChestRoute.Mode.WITHDRAW_ONLY);
         int found = chestRoute.begin(mc, boxes, config.includeEnderChests,
                 config.clickDelayTicks, config.chestPathTimeoutTicks, false, mode, serviceHandler);
         if (found > 0) {
-            chat(mc, "Found §e" + found + "§r chest(s) to service.");
+            chat(mc, "Found §e" + found + "§r chest(s) to service."
+                    + (sortPlan.active() ? " §7(sorting deposits into " + sortPlan.taggedChests() + " tagged chest(s))" : ""));
         }
     }
 
@@ -338,7 +345,7 @@ public final class MinerWorker {
     private final class ServiceHandler implements ChestRoute.Handler {
         @Override
         public int nextDepositSlot(Minecraft mc, AbstractContainerMenu menu) {
-            return config.equip.nextDepositSlot(menu);
+            return sortPlan.depositSlot(menu, chestRoute.currentChest(), config.equip::isKept);
         }
 
         @Override

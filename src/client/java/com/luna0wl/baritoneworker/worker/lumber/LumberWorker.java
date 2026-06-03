@@ -7,8 +7,10 @@ import com.luna0wl.baritoneworker.worker.common.Baritones;
 import com.luna0wl.baritoneworker.worker.common.ChestRoute;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
 import com.luna0wl.baritoneworker.worker.common.MenuActions;
+import com.luna0wl.baritoneworker.worker.common.SortPlan;
 import com.luna0wl.baritoneworker.worker.common.Teleporter;
 import com.luna0wl.baritoneworker.worker.common.WorkerEquip;
+import com.luna0wl.baritoneworker.worker.sorter.SortScheme;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.core.BlockPos;
@@ -43,6 +45,7 @@ public final class LumberWorker {
     private final Teleporter teleporter = new Teleporter();
     private final ChestRoute chestRoute = new ChestRoute();
     private final ChestRoute.Handler serviceHandler = new ServiceHandler();
+    private final SortPlan sortPlan;
 
     private LumberState state = LumberState.IDLE;
     private int ticksInState;
@@ -68,8 +71,9 @@ public final class LumberWorker {
     private int replantClickCooldown;
     private final Set<Long> replantBlacklist = new HashSet<>();
 
-    public LumberWorker(LumberConfig config) {
+    public LumberWorker(LumberConfig config, SortScheme scheme) {
         this.config = config;
+        this.sortPlan = new SortPlan(scheme);
     }
 
     public boolean isRunning() {
@@ -568,10 +572,13 @@ public final class LumberWorker {
         serviceMode = mode;
         serviceCacheKey = cacheKey;
         serviceBoxes = boxes;
+        sortPlan.build(mc, boxes, config.includeEnderChests,
+                config.useSorter && mode != ChestRoute.Mode.WITHDRAW_ONLY);
         int found = chestRoute.begin(mc, boxes, config.includeEnderChests,
                 config.clickDelayTicks, config.chestPathTimeoutTicks, false, mode, serviceHandler);
         if (found > 0) {
-            chat(mc, "Found §e" + found + "§r chest(s) to service.");
+            chat(mc, "Found §e" + found + "§r chest(s) to service."
+                    + (sortPlan.active() ? " §7(sorting deposits into " + sortPlan.taggedChests() + " tagged chest(s))" : ""));
         }
     }
 
@@ -646,7 +653,7 @@ public final class LumberWorker {
     private final class ServiceHandler implements ChestRoute.Handler {
         @Override
         public int nextDepositSlot(Minecraft mc, AbstractContainerMenu menu) {
-            return ContainerService.nextDepositSlotMatching(menu, it -> !keepHere(it));
+            return sortPlan.depositSlot(menu, chestRoute.currentChest(), LumberWorker.this::keepHere);
         }
 
         @Override

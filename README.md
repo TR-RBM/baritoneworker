@@ -97,6 +97,15 @@ folder alongside Baritone.
   chests while it still needs materials (it has to gather everything). The miner and
   lumber bot don't: they service the chests they found, then head straight back to
   work — they won't keep walking the whole room after they've deposited and restocked.
+- **Sort on deposit (optional).** Turn it on per worker with `sorter on` (e.g.
+  `#miner sorter on` / `#lumber sorter on`). When on, the worker doesn't just dump its
+  haul into the first free chest — as it visits each chest it deposits only the items
+  that chest is tagged for, using the **destination chests' own tags** (signs +
+  `sortscheme.json`, the same scheme the `#sorter` uses). Items no chest is tagged for
+  fall back to any chest so nothing gets stuck; kept items (and the lumber bot's
+  saplings) are never deposited. It's one pass — no extra trips — and is shared through
+  a small `common/SortPlan` helper, so adding it to a future worker is a one-liner.
+  Default **off**.
 - Settings persist under `config/baritoneworker/` (`builder.properties`,
   `miner.properties`, `lumber.properties`, `sorter.properties`, `mover.properties`,
   `sortscheme.json`).
@@ -125,6 +134,7 @@ Mine → tunnel → return when full → deposit + restock → repeat.
 | `#miner freeslots <n>` | return to base at this many free slots (default `1`) |
 | `#miner mine <name>` / `home <name>` | home names |
 | `#miner ender on\|off` | also service ender chests in the area (default off) |
+| `#miner sorter on\|off` | deposit each item into the chest tagged for it (signs/sortscheme; default off) |
 | `#miner ore on\|off` | also grab ore exposed in the tunnel walls (off by default) |
 | `#miner ore exclude\|include <group>` | e.g. `exclude coal` (bundles deepslate) |
 
@@ -162,6 +172,7 @@ when replanting).
 | `#lumber freeslots <n>` | return to base at this many free slots (default `1`) |
 | `#lumber work <name>` / `home <name>` | home names |
 | `#lumber ender on\|off` | also service ender chests in the area (default off) |
+| `#lumber sorter on\|off` | deposit each item into the chest tagged for it (signs/sortscheme; default off) |
 
 Saplings are kept/restocked automatically while `replant` is on (they follow the
 selected wood flavours), separately from the keep-list.
@@ -189,9 +200,17 @@ A chest's **tags** come from two places:
 
 A **tag** matches an item if it is a built-in **category** (`ores`, `logs`,
 `planks`, `wood`, `food`, `tools`, `weapons`, `armor`, `redstone`, `dyes`,
-`building`, `misc`), a **custom group** from the scheme, or a **literal item id**
-(`diamond` or `minecraft:diamond`). A chest tagged `misc` catches everything left
-over.
+`building`, `nether`, `ender`, `overworld`, `misc`), a **custom group** from the
+scheme, or a **literal item id** (`diamond` or `minecraft:diamond`). A chest tagged
+`misc` catches everything left over.
+
+The **dimension** tags `nether` / `ender` / `overworld` split items by where they
+come from: `nether` is nether-only blocks (netherrack, quartz, blackstone, basalt,
+soul/crimson/warped, glowstone, netherite…), `ender` is End-only blocks (end stone,
+purpur, chorus, shulker boxes, elytra…), and `overworld` is everything else.
+**Overworld always wins** ties — anything obtainable in more than one dimension
+(gravel, magma block, gold, obsidian…) counts as overworld. Tag three chests
+`nether`, `ender`, `overworld` for a clean dimensional split.
 
 ```json
 {
@@ -337,7 +356,7 @@ restocking it won't break walls to reach a chest and never skips one — see
 src/client/java/com/luna0wl/baritoneworker/
 ├── client/BaritoneWorkerClient.java   # init: keybind, tick driver, command registration
 └── worker/
-    ├── common/   # Baritones, Teleporter, MenuActions, ContainerService, ChestRoute,
+    ├── common/   # Baritones, Teleporter, MenuActions, ContainerService, ChestRoute, SortPlan,
     │             # WorkerEquip (keep-list), AreaSelection (corner capture), ItemNames, ItemCategories
     ├── miner/    # MinerWorker, MinerConfig, MinerCommand, MinerState, Ores
     ├── lumber/   # LumberWorker, LumberConfig, LumberCommand, LumberState, Woods

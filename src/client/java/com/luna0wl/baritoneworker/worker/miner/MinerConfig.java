@@ -2,7 +2,6 @@ package com.luna0wl.baritoneworker.worker.miner;
 
 import com.luna0wl.baritoneworker.worker.common.WorkerEquip;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.core.BlockPos;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -75,6 +74,8 @@ public final class MinerConfig {
 
     public boolean includeEnderChests = false;
 
+    public boolean useSorter = false;
+
     public boolean debug = false;
 
     public void setArea(List<int[]> boxes) {
@@ -111,16 +112,6 @@ public final class MinerConfig {
         return hasRestock() ? restockBoxes : chestBoxes;
     }
 
-    public boolean areaContains(BlockPos pos) {
-        int x = pos.getX(), y = pos.getY(), z = pos.getZ();
-        for (int[] b : chestBoxes) {
-            if (x >= b[0] && x <= b[3] && y >= b[1] && y <= b[4] && z >= b[2] && z <= b[5]) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static Path file() {
         return FabricLoader.getInstance().getConfigDir().resolve("baritoneworker").resolve("miner.properties");
     }
@@ -149,6 +140,7 @@ public final class MinerConfig {
         p.setProperty("oreScanInterval", Integer.toString(oreScanInterval));
         p.setProperty("excludedOreGroups", String.join(",", excludedOreGroups));
         p.setProperty("includeEnderChests", Boolean.toString(includeEnderChests));
+        p.setProperty("useSorter", Boolean.toString(useSorter));
         p.setProperty("debug", Boolean.toString(debug));
         p.setProperty("chestBoxes", serializeBoxes(chestBoxes));
         p.setProperty("restockBoxes", serializeBoxes(restockBoxes));
@@ -202,6 +194,7 @@ public final class MinerConfig {
             if (!g.isBlank() && Ores.isGroup(g.trim())) excludedOreGroups.add(g.trim());
         }
         includeEnderChests = Boolean.parseBoolean(p.getProperty("includeEnderChests", Boolean.toString(includeEnderChests)));
+        useSorter = Boolean.parseBoolean(p.getProperty("useSorter", Boolean.toString(useSorter)));
         debug = Boolean.parseBoolean(p.getProperty("debug", Boolean.toString(debug)));
         deserializeBoxes(chestBoxes, p.getProperty("chestBoxes", ""));
         deserializeBoxes(restockBoxes, p.getProperty("restockBoxes", ""));

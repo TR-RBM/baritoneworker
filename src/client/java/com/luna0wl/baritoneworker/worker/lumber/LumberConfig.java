@@ -71,6 +71,8 @@ public final class LumberConfig {
 
     public boolean includeEnderChests = false;
 
+    public boolean useSorter = false;
+
     private static WorkerEquip defaultEquip() {
         WorkerEquip eq = new WorkerEquip();
         eq.add("minecraft:diamond_axe", 1);
@@ -146,6 +148,7 @@ public final class LumberConfig {
         p.setProperty("maxTreeBlocks", Integer.toString(maxTreeBlocks));
         p.setProperty("woodFlavours", String.join(",", woodFlavours));
         p.setProperty("includeEnderChests", Boolean.toString(includeEnderChests));
+        p.setProperty("useSorter", Boolean.toString(useSorter));
         p.setProperty("workPos", serializePos(workPos));
         p.setProperty("homePos", serializePos(homePos));
         p.setProperty("chestBoxes", serializeBoxes(chestBoxes));
@@ -202,6 +205,7 @@ public final class LumberConfig {
             if (!g.isBlank() && Woods.isFlavour(g.trim())) woodFlavours.add(g.trim());
         }
         includeEnderChests = Boolean.parseBoolean(p.getProperty("includeEnderChests", Boolean.toString(includeEnderChests)));
+        useSorter = Boolean.parseBoolean(p.getProperty("useSorter", Boolean.toString(useSorter)));
         workPos = deserializePos(p.getProperty("workPos", ""));
         homePos = deserializePos(p.getProperty("homePos", ""));
         deserializeBoxes(chestBoxes, p.getProperty("chestBoxes", ""));

@@ -25,7 +25,7 @@ public final class MinerCommand extends Command {
 
     private static final List<String> SUBS = List.of(
             "start", "stop", "status", "area", "corner1", "corner2", "restock", "keep",
-            "freeslots", "mine", "home", "ore", "ender", "save", "debug");
+            "freeslots", "mine", "home", "ore", "ender", "sorter", "save", "debug");
 
     private final MinerWorker worker;
     private final MinerConfig config;
@@ -61,6 +61,7 @@ public final class MinerCommand extends Command {
                 case "home" -> { config.baseHome = args.getString(); config.save(); logDirect("baseHome = " + config.baseHome); }
                 case "ore" -> doOre(args);
                 case "ender" -> doEnder(args);
+                case "sorter" -> doSorter(args);
                 case "debug" -> doDebug(args);
                 default -> logDirect("Unknown subcommand '" + sub + "'. Try: " + String.join(", ", SUBS));
             }
@@ -380,6 +381,29 @@ public final class MinerCommand extends Command {
                 : "§coff§r — ender chests are ignored."));
     }
 
+    private void doSorter(IArgConsumer args) {
+        if (!args.hasAny()) {
+            logDirect("sort-on-deposit = " + (config.useSorter ? "§aon" : "§coff")
+                    + "§r — " + (config.useSorter
+                        ? "each deposited item goes straight into the chest tagged for it."
+                        : "deposits into the first free chest (no sorting)."));
+            logDirect("Usage: §e#miner sorter on|off§r (tag chests with signs or §e#sorter assign§r)");
+            return;
+        }
+        String a = args.getString().toLowerCase(Locale.ROOT);
+        boolean on = a.equals("on") || a.equals("true") || a.equals("yes") || a.equals("1");
+        boolean off = a.equals("off") || a.equals("false") || a.equals("no") || a.equals("0");
+        if (!on && !off) {
+            logDirect("Usage: §e#miner sorter on|off");
+            return;
+        }
+        config.useSorter = on;
+        config.save();
+        logDirect("sort-on-deposit = " + (on
+                ? "§aon§r — deposits land in the chest tagged for them (signs / sortscheme.json)."
+                : "§coff§r — deposits into the first free chest."));
+    }
+
     private int nextInt(IArgConsumer args, int fallback) {
         if (!args.hasAny()) return fallback;
         try {
@@ -399,7 +423,8 @@ public final class MinerCommand extends Command {
                 + "§r restockArea=§e" + config.restockBoxes.size() + "§r box(es)"
                 + (config.hasRestock() ? "" : " §7(uses chest area)"));
         logDirect(" exposedOreMining=" + (config.mineExposedOres ? "§aON" : "§cOFF") + "§r (#miner ore)"
-                + "§r enderChests=" + (config.includeEnderChests ? "§aon" : "§coff"));
+                + "§r enderChests=" + (config.includeEnderChests ? "§aon" : "§coff")
+                + "§r sortOnDeposit=" + (config.useSorter ? "§aon" : "§coff"));
     }
 
     @Override
@@ -440,6 +465,7 @@ public final class MinerCommand extends Command {
                 "> miner freeslots <n> - return to base at this many free slots (default 1)",
                 "> miner mine <name> / miner home <name> - home names",
                 "> miner ender on|off - also service ender chests in the area (default off)",
+                "> miner sorter on|off - deposit each item into the chest tagged for it (signs/sortscheme; default off)",
                 "",
                 "Exposed-ore mining (optional, off by default):",
                 "> miner ore on|off - detour to grab ore exposed in the tunnel walls",

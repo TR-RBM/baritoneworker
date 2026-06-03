@@ -17,7 +17,7 @@ public final class LumberCommand extends Command {
 
     private static final List<String> SUBS = List.of(
             "start", "stop", "status", "area", "corner1", "corner2", "restock", "keep", "wood",
-            "replant", "sapling", "freeslots", "work", "home", "ender", "save");
+            "replant", "sapling", "freeslots", "work", "home", "ender", "sorter", "save");
 
     private final LumberWorker worker;
     private final LumberConfig config;
@@ -55,6 +55,7 @@ public final class LumberCommand extends Command {
                 case "work" -> { config.workHome = args.getString(); config.save(); logDirect("workHome = " + config.workHome); }
                 case "home" -> { config.baseHome = args.getString(); config.save(); logDirect("baseHome = " + config.baseHome); }
                 case "ender" -> doEnder(args);
+                case "sorter" -> doSorter(args);
                 default -> logDirect("Unknown subcommand '" + sub + "'. Try: " + String.join(", ", SUBS));
             }
         } catch (Exception e) {
@@ -253,6 +254,29 @@ public final class LumberCommand extends Command {
                 : "§coff§r — ender chests are ignored."));
     }
 
+    private void doSorter(IArgConsumer args) {
+        if (!args.hasAny()) {
+            logDirect("sort-on-deposit = " + (config.useSorter ? "§aon" : "§coff")
+                    + "§r — " + (config.useSorter
+                        ? "each deposited item goes straight into the chest tagged for it."
+                        : "deposits into the first free chest (no sorting)."));
+            logDirect("Usage: §e#lumber sorter on|off§r (tag chests with signs or §e#sorter assign§r)");
+            return;
+        }
+        String a = args.getString().toLowerCase(Locale.ROOT);
+        boolean on = a.equals("on") || a.equals("true") || a.equals("yes") || a.equals("1");
+        boolean off = a.equals("off") || a.equals("false") || a.equals("no") || a.equals("0");
+        if (!on && !off) {
+            logDirect("Usage: §e#lumber sorter on|off");
+            return;
+        }
+        config.useSorter = on;
+        config.save();
+        logDirect("sort-on-deposit = " + (on
+                ? "§aon§r — deposits land in the chest tagged for them (signs / sortscheme.json)."
+                : "§coff§r — deposits into the first free chest."));
+    }
+
     private int nextInt(IArgConsumer args, int fallback) {
         if (!args.hasAny()) return fallback;
         try {
@@ -273,7 +297,8 @@ public final class LumberCommand extends Command {
                 + (config.hasArea() ? "" : " §c(not set — run #lumber corner1 / corner2)")
                 + "§r restockArea=§e" + config.restockBoxes.size() + "§r box(es)"
                 + (config.hasRestock() ? "" : " §7(uses chest area)")
-                + "§r enderChests=" + (config.includeEnderChests ? "§aon" : "§coff"));
+                + "§r enderChests=" + (config.includeEnderChests ? "§aon" : "§coff")
+                + "§r sortOnDeposit=" + (config.useSorter ? "§aon" : "§coff"));
     }
 
     @Override
@@ -315,7 +340,8 @@ public final class LumberCommand extends Command {
                 "> lumber sapling <n> - how many saplings to keep when replanting (default 16)",
                 "> lumber freeslots <n> - return to base at this many free slots (default 1)",
                 "> lumber work <name> / lumber home <name> - home names",
-                "> lumber ender on|off - also service ender chests in the area (default off)"
+                "> lumber ender on|off - also service ender chests in the area (default off)",
+                "> lumber sorter on|off - deposit each item into the chest tagged for it (signs/sortscheme; default off)"
         );
     }
 }

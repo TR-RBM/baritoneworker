@@ -35,6 +35,9 @@ public final class ItemCategories {
         CATS.put("redstone", ItemCategories::isRedstone);
         CATS.put("dyes", pathEndsWith("_dye"));
         CATS.put("building", ItemCategories::isBuilding);
+        CATS.put("nether", ItemCategories::isNether);
+        CATS.put("ender", ItemCategories::isEnd);
+        CATS.put("overworld", ItemCategories::isOverworld);
         CATS.put("misc", item -> true);
     }
 
@@ -130,5 +133,33 @@ public final class ItemCategories {
                  "blackstone", "tuff", "calcite", "dripstone_block" -> true;
             default -> false;
         };
+    }
+
+    private static boolean isNether(Item item) {
+        String p = ItemNames.pathOf(item);
+        if (p.startsWith("crimson_") || p.startsWith("warped_") || p.startsWith("soul_")
+                || p.startsWith("nether")) return true;
+        if (p.contains("blackstone") || p.contains("basalt") || p.contains("quartz")) return true;
+        return switch (p) {
+            case "glowstone", "glowstone_dust", "magma_cream", "blaze_rod", "blaze_powder",
+                 "ghast_tear", "shroomlight", "weeping_vines", "twisting_vines",
+                 "ancient_debris", "lodestone", "respawn_anchor", "wither_skeleton_skull" -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isEnd(Item item) {
+        String p = ItemNames.pathOf(item);
+        if (p.startsWith("purpur_") || p.startsWith("chorus_") || p.startsWith("end_stone")
+                || p.endsWith("shulker_box")) return true;
+        return switch (p) {
+            case "end_rod", "dragon_egg", "dragon_head", "dragon_breath",
+                 "popped_chorus_fruit", "shulker_shell", "elytra" -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isOverworld(Item item) {
+        return !isNether(item) && !isEnd(item);
     }
 }

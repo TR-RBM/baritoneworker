@@ -33,13 +33,14 @@ public class BaritoneWorkerClient implements ClientModInitializer {
 
     private static final Logger LOG = LoggerFactory.getLogger("baritoneworker/client");
 
+    private final SortScheme scheme = new SortScheme();
+
     private final MinerConfig minerConfig = new MinerConfig();
-    private final MinerWorker miner = new MinerWorker(minerConfig);
+    private final MinerWorker miner = new MinerWorker(minerConfig, scheme);
 
     private final LumberConfig lumberConfig = new LumberConfig();
-    private final LumberWorker lumber = new LumberWorker(lumberConfig);
+    private final LumberWorker lumber = new LumberWorker(lumberConfig, scheme);
 
-    private final SortScheme scheme = new SortScheme();
     private final SorterConfig sorterConfig = new SorterConfig();
     private final SorterWorker sorter = new SorterWorker(sorterConfig, scheme);
     private final MoverConfig moverConfig = new MoverConfig();

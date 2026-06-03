@@ -88,10 +88,6 @@ public final class SortScheme {
         save();
     }
 
-    public boolean hasAnyChestPins() {
-        return !chestTags.isEmpty();
-    }
-
     public boolean accepts(List<String> tags, Item item) {
         for (String tag : tags) {
             if (tagMatches(tag, item, 0)) return true;
