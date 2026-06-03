@@ -3,13 +3,13 @@ package com.luna0wl.baritoneworker.worker.builder;
 import baritone.api.IBaritone;
 import baritone.api.command.Command;
 import baritone.api.command.argument.IArgConsumer;
-import baritone.api.selection.ISelection;
 import baritone.api.utils.BetterBlockPos;
+import com.luna0wl.baritoneworker.worker.common.AreaSelection;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
-import com.luna0wl.baritoneworker.worker.common.ItemNames;
-import net.minecraft.world.item.Item;
+import com.luna0wl.baritoneworker.worker.common.ItemCategories;
+import com.luna0wl.baritoneworker.worker.common.WorkerEquip;
+import net.minecraft.core.BlockPos;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
@@ -17,11 +17,12 @@ import java.util.stream.Stream;
 public final class BuilderCommand extends Command {
 
     private static final List<String> SUBS = List.of(
-            "start", "stop", "status", "area", "food", "work", "home",
+            "start", "stop", "status", "area", "corner1", "corner2", "keep", "work", "home",
             "litematic", "file", "origin", "stopat", "sethome", "builds", "ender", "save");
 
     private final BuilderWorker worker;
     private final BuilderConfig config;
+    private final AreaSelection areaSel = new AreaSelection();
 
     public BuilderCommand(IBaritone baritone, BuilderWorker worker, BuilderConfig config) {
         super(baritone, "builder");
@@ -44,7 +45,9 @@ public final class BuilderCommand extends Command {
                 case "status" -> printStatus();
                 case "save" -> { config.save(); logDirect("Settings saved."); }
                 case "area" -> doArea(args);
-                case "food" -> doFood(args);
+                case "corner1" -> captureCorner(false);
+                case "corner2" -> captureCorner(true);
+                case "keep" -> doKeep(args);
                 case "work" -> { config.workHome = args.getString(); config.save(); logDirect("buildHome = " + config.workHome); }
                 case "home" -> { config.baseHome = args.getString(); config.save(); logDirect("baseHome = " + config.baseHome); }
                 case "litematic" -> { config.litematicIndex = Math.max(0, nextInt(args, config.litematicIndex)); config.save(); logDirect("litematic placement index = §e" + config.litematicIndex); }
@@ -71,25 +74,43 @@ public final class BuilderCommand extends Command {
         }
     }
 
-    private void doFood(IArgConsumer args) {
-        if (!args.hasAny()) {
-            logDirect("food: item=§e" + ItemNames.idOf(config.foodItem) + "§r keep=§e" + config.targetFood);
+    private void doKeep(IArgConsumer args) {
+        if (!args.hasAny()) { printKeep(); return; }
+        String op = args.getString().toLowerCase(Locale.ROOT);
+        switch (op) {
+            case "list" -> printKeep();
+            case "clear" -> { config.equip.clear(); config.save(); logDirect("Keep list cleared."); }
+            case "add", "set" -> {
+                if (!args.hasAny()) { logDirect("Usage: §e#builder keep add <item|category> <count>"); return; }
+                String token = args.getString().trim();
+                int count = nextInt(args, 1);
+                if (!config.equip.add(token, count)) {
+                    logDirect("§cUnknown item/category '" + token + "'. Use a registry id (e.g. §ecooked_beef§c) "
+                            + "or a category (§e" + String.join(", ", ItemCategories.names()) + "§c).");
+                    return;
+                }
+                config.save();
+                logDirect("keep §e" + token + "§r ×" + count);
+            }
+            case "remove" -> {
+                if (!args.hasAny()) { logDirect("Usage: §e#builder keep remove <item|category>"); return; }
+                String token = args.getString().trim();
+                boolean removed = config.equip.remove(token);
+                config.save();
+                logDirect(removed ? "Removed §e" + token + "§r from the keep list." : "§cNot in keep list: " + token);
+            }
+            default -> logDirect("Usage: §e#builder keep add|remove|set|clear|list <item|category> <count>");
+        }
+    }
+
+    private void printKeep() {
+        logDirect("§9Keep list§r (withdrawn from the supply area alongside build blocks):");
+        if (config.equip.isEmpty()) {
+            logDirect("  §7(empty)");
             return;
         }
-        String s = args.getString().trim();
-        try {
-            config.targetFood = Math.max(0, Integer.parseInt(s));
-            config.save();
-            logDirect("keep food count = §e" + config.targetFood);
-        } catch (NumberFormatException e) {
-            Item it = ItemNames.byId(s);
-            if (it == null) {
-                logDirect("§cUnknown item '" + s + "'. Give a registry id (e.g. §ecooked_beef§c) or a number.");
-                return;
-            }
-            config.setFoodItem(it);
-            config.save();
-            logDirect("food item = §e" + ItemNames.idOf(it));
+        for (WorkerEquip.Entry e : config.equip.entries()) {
+            logDirect("  §e" + e.token() + "§r ×" + e.count() + (e.isCategory() ? " §7(category)" : ""));
         }
     }
 
@@ -248,28 +269,36 @@ public final class BuilderCommand extends Command {
         }
     }
 
-    private void doArea(IArgConsumer args) {
-        if (args.hasAny() && args.getString().equalsIgnoreCase("clear")) {
-            config.clearArea();
-            config.save();
-            logDirect("Supply area cleared.");
+    private void captureCorner(boolean second) {
+        BlockPos feet = ctx.playerFeet();
+        if (second) areaSel.setCorner2(feet);
+        else areaSel.setCorner1(feet);
+        logDirect("§aSupply corner " + (second ? "2" : "1") + " = §r"
+                + feet.getX() + "," + feet.getY() + "," + feet.getZ());
+        if (!areaSel.ready()) {
+            logDirect("§7Now stand on the opposite corner and run §e#builder corner" + (second ? "1" : "2") + "§7.");
             return;
         }
-        ISelection[] sels = baritone.getSelectionManager().getSelections();
-        if (sels == null || sels.length == 0) {
-            logDirect("§cNo Baritone selection found. Make one with §e#sel 1§c / §e#sel 2§c first.");
-            return;
-        }
-        List<int[]> boxes = new ArrayList<>();
-        for (ISelection s : sels) {
-            BetterBlockPos mn = s.min();
-            BetterBlockPos mx = s.max();
-            boxes.add(new int[]{mn.x, mn.y, mn.z, mx.x, mx.y, mx.z});
-        }
+        List<int[]> boxes = areaSel.boxes();
         config.setArea(boxes);
         config.save();
-        int chests = ContainerService.scanChests(ctx.world(), boxes, ctx.playerFeet()).size();
-        logDirect("Captured §e" + boxes.size() + "§r box(es) holding §e" + chests + "§r supply chest(s).");
+        int chests = ContainerService.scanChests(ctx.world(), boxes, ctx.playerFeet(), config.includeEnderChests).size();
+        logDirect("Captured the supply area holding §e" + chests + "§r supply chest(s).");
+        if (chests == 0) {
+            logDirect("§eNo chests detected yet — make sure the area is loaded and contains chests.");
+        }
+    }
+
+    private void doArea(IArgConsumer args) {
+        String op = args.hasAny() ? args.getString().toLowerCase(Locale.ROOT) : "status";
+        switch (op) {
+            case "clear" -> { config.clearArea(); areaSel.clear(); config.save(); logDirect("Supply area cleared."); }
+            case "corner1" -> captureCorner(false);
+            case "corner2" -> captureCorner(true);
+            case "status" -> logDirect("Supply area: §e" + config.chestBoxes.size() + "§r box(es) "
+                    + (config.hasArea() ? "" : "§c(not set)") + "  pending: " + areaSel.status());
+            default -> logDirect("Usage: §e#builder area corner1|corner2|clear|status§r (or §e#builder corner1/corner2§r).");
+        }
     }
 
     private int nextInt(IArgConsumer args, int fallback) {
@@ -291,9 +320,9 @@ public final class BuilderCommand extends Command {
         logDirect(" source=" + (config.hasSchematicFile()
                 ? "§efile " + config.schematicFile + "§r origin=" + (config.buildOriginPos != null ? "§e" + posStr(config.buildOriginPos) : "§eauto")
                 : "§eopen Litematica #" + config.litematicIndex));
-        logDirect(" food=§e" + ItemNames.idOf(config.foodItem) + "§r×" + config.targetFood);
+        logDirect(" keep=§e" + (config.equip.isEmpty() ? "(empty)" : config.equip.serialize()));
         logDirect(" supplyArea=§e" + config.chestBoxes.size() + "§r box(es)"
-                + (config.hasArea() ? "" : " §c(not set — run #builder area)")
+                + (config.hasArea() ? "" : " §c(not set — run #builder corner1 / corner2)")
                 + "§r enderChests=" + (config.includeEnderChests ? "§aon" : "§coff"));
         logDirect(" stopAt=" + (config.hasStop() ? "§e" + posStr(config.stopPos) + "§r r=" + config.stopRadius : "§c(off)"));
         logDirect(" sethome-on-leaving=" + (config.resetWorkHome ? "§aon" : "§coff")
@@ -324,13 +353,16 @@ public final class BuilderCommand extends Command {
                 "- Open/place your schematic in Litematica.",
                 "- Set Essentials homes 'build' (at the build site) and 'Home' (by your supply room).",
                 "- Stock the supply room with the blocks the schematic needs (+ food).",
-                "- Select the supply room with #sel 1 / #sel 2, then run #builder area.",
+                "- Stand on one corner of the supply room and run #builder corner1, then the",
+                "  opposite corner and #builder corner2.",
                 "",
                 "Usage:",
                 "> builder - show status",
                 "> builder start / stop",
-                "> builder area [clear] - capture the current selection as the supply area",
-                "> builder food <n|item> - how much / which food to keep (default 64)",
+                "> builder corner1 / corner2 - capture the supply area by standing on its corners",
+                "> builder area clear|status - manage the supply area",
+                "> builder keep add <item|category> <count> - extra items to withdraw (e.g. 'keep add food 64')",
+                "> builder keep remove <item|category> / keep clear / keep list",
                 "> builder work <name> / builder home <name> - build-site and base home names",
                 "> builder litematic <index> - which open Litematica placement to build (default 0)",
                 "> builder <file.litematic> - shortcut: build a schematic file and start (like #build)",

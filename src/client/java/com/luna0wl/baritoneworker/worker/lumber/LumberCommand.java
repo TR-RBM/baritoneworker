@@ -3,13 +3,12 @@ package com.luna0wl.baritoneworker.worker.lumber;
 import baritone.api.IBaritone;
 import baritone.api.command.Command;
 import baritone.api.command.argument.IArgConsumer;
-import baritone.api.selection.ISelection;
-import baritone.api.utils.BetterBlockPos;
+import com.luna0wl.baritoneworker.worker.common.AreaSelection;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
-import com.luna0wl.baritoneworker.worker.common.ItemNames;
-import net.minecraft.world.item.Item;
+import com.luna0wl.baritoneworker.worker.common.ItemCategories;
+import com.luna0wl.baritoneworker.worker.common.WorkerEquip;
+import net.minecraft.core.BlockPos;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
@@ -17,11 +16,13 @@ import java.util.stream.Stream;
 public final class LumberCommand extends Command {
 
     private static final List<String> SUBS = List.of(
-            "start", "stop", "status", "area", "axe", "food", "wood",
+            "start", "stop", "status", "area", "corner1", "corner2", "restock", "keep", "wood",
             "replant", "sapling", "freeslots", "work", "home", "ender", "save");
 
     private final LumberWorker worker;
     private final LumberConfig config;
+    private final AreaSelection areaSel = new AreaSelection();
+    private final AreaSelection restockSel = new AreaSelection();
 
     public LumberCommand(IBaritone baritone, LumberWorker worker, LumberConfig config) {
         super(baritone, "lumber");
@@ -43,9 +44,11 @@ public final class LumberCommand extends Command {
                 case "status" -> printStatus();
                 case "save" -> { config.save(); logDirect("Settings saved."); }
                 case "area" -> doArea(args);
-                case "axe" -> doSupply(args, Supply.AXE);
-                case "food" -> doSupply(args, Supply.FOOD);
-                case "sapling" -> doSupply(args, Supply.SAPLING);
+                case "corner1" -> captureCorner(areaSel, false, false);
+                case "corner2" -> captureCorner(areaSel, true, false);
+                case "restock" -> doRestock(args);
+                case "keep" -> doKeep(args);
+                case "sapling" -> doSapling(args);
                 case "wood" -> doWood(args);
                 case "replant" -> doReplant(args);
                 case "freeslots" -> { config.stopAtFreeSlots = nextInt(args, config.stopAtFreeSlots); config.save(); logDirect("stopAtFreeSlots = " + config.stopAtFreeSlots); }
@@ -59,43 +62,55 @@ public final class LumberCommand extends Command {
         }
     }
 
-    private enum Supply { AXE, FOOD, SAPLING }
-
-    private void doSupply(IArgConsumer args, Supply which) {
-        String label = which.name().toLowerCase(Locale.ROOT);
-        if (!args.hasAny()) {
-            switch (which) {
-                case AXE -> logDirect("axe: item=§e" + ItemNames.idOf(config.axeItem) + "§r keep=§e" + config.targetAxes);
-                case FOOD -> logDirect("food: item=§e" + ItemNames.idOf(config.foodItem) + "§r keep=§e" + config.targetFood);
-                case SAPLING -> logDirect("sapling: keep=§e" + config.targetSaplings + "§r (tracks selected wood flavours)");
+    private void doKeep(IArgConsumer args) {
+        if (!args.hasAny()) { printKeep(); return; }
+        String op = args.getString().toLowerCase(Locale.ROOT);
+        switch (op) {
+            case "list" -> printKeep();
+            case "clear" -> { config.equip.clear(); config.save(); logDirect("Keep list cleared."); }
+            case "add", "set" -> {
+                if (!args.hasAny()) { logDirect("Usage: §e#lumber keep add <item|category> <count>"); return; }
+                String token = args.getString().trim();
+                int count = nextInt(args, 1);
+                if (!config.equip.add(token, count)) {
+                    logDirect("§cUnknown item/category '" + token + "'. Use a registry id (e.g. §enetherite_axe§c) "
+                            + "or a category (§e" + String.join(", ", ItemCategories.names()) + "§c).");
+                    return;
+                }
+                config.save();
+                logDirect("keep §e" + token + "§r ×" + count);
             }
+            case "remove" -> {
+                if (!args.hasAny()) { logDirect("Usage: §e#lumber keep remove <item|category>"); return; }
+                String token = args.getString().trim();
+                boolean removed = config.equip.remove(token);
+                config.save();
+                logDirect(removed ? "Removed §e" + token + "§r from the keep list." : "§cNot in keep list: " + token);
+            }
+            default -> logDirect("Usage: §e#lumber keep add|remove|set|clear|list <item|category> <count>");
+        }
+    }
+
+    private void printKeep() {
+        logDirect("§9Keep list§r (kept on deposit, topped up on restock):");
+        if (config.equip.isEmpty()) {
+            logDirect("  §7(empty)");
             return;
         }
-        String s = args.getString().trim();
-        try {
-            int n = Math.max(0, Integer.parseInt(s));
-            switch (which) {
-                case AXE -> config.targetAxes = n;
-                case FOOD -> config.targetFood = n;
-                case SAPLING -> config.targetSaplings = n;
-            }
-            config.save();
-            logDirect("keep " + label + " count = §e" + n);
-        } catch (NumberFormatException e) {
-            if (which == Supply.SAPLING) {
-                logDirect("§cSaplings can't be pinned to one item — they follow the wood flavours. Give a number.");
-                return;
-            }
-            Item it = ItemNames.byId(s);
-            if (it == null) {
-                logDirect("§cUnknown item '" + s + "'. Give a registry id (e.g. §e"
-                        + (which == Supply.AXE ? "netherite_axe" : "cooked_beef") + "§c) or a number.");
-                return;
-            }
-            if (which == Supply.AXE) config.setAxeItem(it); else config.setFoodItem(it);
-            config.save();
-            logDirect(label + " item = §e" + ItemNames.idOf(it));
+        for (WorkerEquip.Entry e : config.equip.entries()) {
+            logDirect("  §e" + e.token() + "§r ×" + e.count() + (e.isCategory() ? " §7(category)" : ""));
         }
+        logDirect("  §7saplings ×" + config.targetSaplings + " (when replant is on)");
+    }
+
+    private void doSapling(IArgConsumer args) {
+        if (!args.hasAny()) {
+            logDirect("sapling: keep=§e" + config.targetSaplings + "§r (tracks selected wood flavours when replanting)");
+            return;
+        }
+        config.targetSaplings = Math.max(0, nextInt(args, config.targetSaplings));
+        config.save();
+        logDirect("keep saplings = §e" + config.targetSaplings);
     }
 
     private void doWood(IArgConsumer args) {
@@ -134,7 +149,6 @@ public final class LumberCommand extends Command {
             logDirect("§cUnknown flavour '" + g + "'. Known: §e" + String.join(", ", Woods.names()));
             return;
         }
-        config.rebuildKeep();
         config.save();
         logDirect("Now harvesting: §e" + harvested());
     }
@@ -162,30 +176,58 @@ public final class LumberCommand extends Command {
         }
     }
 
-    private void doArea(IArgConsumer args) {
-        if (args.hasAny() && args.getString().equalsIgnoreCase("clear")) {
-            config.clearArea();
-            config.save();
-            logDirect("Chest area cleared.");
+    private void captureCorner(AreaSelection sel, boolean second, boolean restock) {
+        BlockPos feet = ctx.playerFeet();
+        String name = restock ? "Restock" : "Chest";
+        if (second) sel.setCorner2(feet);
+        else sel.setCorner1(feet);
+        logDirect("§a" + name + " corner " + (second ? "2" : "1") + " = §r"
+                + feet.getX() + "," + feet.getY() + "," + feet.getZ());
+        if (!sel.ready()) {
+            logDirect("§7Now stand on the opposite corner and run §e#lumber "
+                    + (restock ? "restock " : "") + "corner" + (second ? "1" : "2") + "§7.");
             return;
         }
-        ISelection[] sels = baritone.getSelectionManager().getSelections();
-        if (sels == null || sels.length == 0) {
-            logDirect("§cNo Baritone selection found. Make one with §e#sel 1§c / §e#sel 2§c first.");
-            return;
-        }
-        List<int[]> boxes = new ArrayList<>();
-        for (ISelection s : sels) {
-            BetterBlockPos mn = s.min();
-            BetterBlockPos mx = s.max();
-            boxes.add(new int[]{mn.x, mn.y, mn.z, mx.x, mx.y, mx.z});
-        }
-        config.setArea(boxes);
+        List<int[]> boxes = sel.boxes();
+        if (restock) config.setRestock(boxes); else config.setArea(boxes);
         config.save();
-        int chests = ContainerService.scanChests(ctx.world(), boxes, ctx.playerFeet()).size();
-        logDirect("Captured §e" + boxes.size() + "§r selection box(es) holding §e" + chests + "§r chest(s)/barrel(s).");
+        int chests = ContainerService.scanChests(ctx.world(), boxes, ctx.playerFeet(), config.includeEnderChests).size();
+        logDirect("Captured the " + name.toLowerCase(Locale.ROOT) + " area holding §e" + chests + "§r chest(s)/barrel(s).");
         if (chests == 0) {
-            logDirect("§eNo chests detected in the selection yet — make sure the area is loaded and actually contains chests.");
+            logDirect("§eNo chests detected yet — make sure the area is loaded and contains chests.");
+        }
+    }
+
+    private void doArea(IArgConsumer args) {
+        String op = args.hasAny() ? args.getString().toLowerCase(Locale.ROOT) : "status";
+        switch (op) {
+            case "clear" -> { config.clearArea(); areaSel.clear(); config.save(); logDirect("Chest area cleared."); }
+            case "corner1" -> captureCorner(areaSel, false, false);
+            case "corner2" -> captureCorner(areaSel, true, false);
+            case "status" -> logDirect("Chest area: §e" + config.chestBoxes.size() + "§r box(es) "
+                    + (config.hasArea() ? "" : "§c(not set)") + "  pending: " + areaSel.status());
+            default -> logDirect("Usage: §e#lumber area corner1|corner2|clear|status§r (or §e#lumber corner1/corner2§r).");
+        }
+    }
+
+    private void doRestock(IArgConsumer args) {
+        String op = args.hasAny() ? args.getString().toLowerCase(Locale.ROOT) : "status";
+        switch (op) {
+            case "clear" -> { config.clearRestock(); restockSel.clear(); config.save(); logDirect("Restock area cleared — restocking falls back to the chest area."); }
+            case "corner1" -> captureCorner(restockSel, false, true);
+            case "corner2" -> captureCorner(restockSel, true, true);
+            case "home" -> {
+                if (!args.hasAny()) { logDirect("restockHome = §e" + (config.restockHome.isBlank() ? "(shares base home)" : config.restockHome)); return; }
+                String h = args.getString().trim();
+                config.restockHome = h.equalsIgnoreCase("clear") ? "" : h;
+                config.save();
+                logDirect("restockHome = §e" + (config.restockHome.isBlank() ? "(shares base home)" : config.restockHome));
+            }
+            case "status" -> logDirect("Restock area: §e" + config.restockBoxes.size() + "§r box(es) "
+                    + (config.hasRestock() ? "" : "§7(unset — uses the chest area)")
+                    + "  restockHome=§e" + (config.restockHome.isBlank() ? "(base)" : config.restockHome)
+                    + "  pending: " + restockSel.status());
+            default -> logDirect("Usage: §e#lumber restock corner1|corner2|clear|status|home <name>");
         }
     }
 
@@ -222,14 +264,15 @@ public final class LumberCommand extends Command {
 
     private void printStatus() {
         logDirect("§2BaritoneLumber§r — state: §e" + worker.getState());
-        logDirect(" workHome=§e" + config.workHome + "§r baseHome=§e" + config.baseHome);
-        logDirect(" axe=§e" + ItemNames.idOf(config.axeItem) + "§r×" + config.targetAxes
-                + "§r  food=§e" + ItemNames.idOf(config.foodItem) + "§r×" + config.targetFood
-                + "§r  stopAtFreeSlots=§e" + config.stopAtFreeSlots);
+        logDirect(" workHome=§e" + config.workHome + "§r baseHome=§e" + config.baseHome
+                + "§r stopAtFreeSlots=§e" + config.stopAtFreeSlots);
+        logDirect(" keep=§e" + (config.equip.isEmpty() ? "(empty)" : config.equip.serialize()));
         logDirect(" woods=§e" + harvested());
         logDirect(" replant=" + (config.replant ? "§aON" : "§cOFF") + "§r×" + config.targetSaplings + "§r (#lumber replant)");
         logDirect(" chestArea=§e" + config.chestBoxes.size() + "§r box(es)"
-                + (config.hasArea() ? "" : " §c(not set — run #lumber area)")
+                + (config.hasArea() ? "" : " §c(not set — run #lumber corner1 / corner2)")
+                + "§r restockArea=§e" + config.restockBoxes.size() + "§r box(es)"
+                + (config.hasRestock() ? "" : " §7(uses chest area)")
                 + "§r enderChests=" + (config.includeEnderChests ? "§aon" : "§coff"));
     }
 
@@ -254,14 +297,18 @@ public final class LumberCommand extends Command {
                 "",
                 "Setup:",
                 "- Set Essentials homes 'wood' (in the forest) and 'Home' (by your storage room).",
-                "- Select your chest room with #sel 1 / #sel 2, then run #lumber area.",
+                "- Stand on one corner of your chest room and run #lumber corner1, then the",
+                "  opposite corner and #lumber corner2.",
                 "",
                 "Usage:",
                 "> lumber - show status",
                 "> lumber start / stop",
-                "> lumber area [clear] - capture the current selection as the chest area",
-                "> lumber axe <n> / axe <item> - how many / which axe to keep (default 1, diamond_axe)",
-                "> lumber food <n> / food <item> - how much / which food to keep (default 64)",
+                "> lumber corner1 / corner2 - capture the chest (deposit) area by standing on its corners",
+                "> lumber area clear|status - manage the chest area",
+                "> lumber restock corner1|corner2|clear|status - a separate supply area to restock from",
+                "> lumber restock home <name|clear> - teleport to this home before restocking (default: base)",
+                "> lumber keep add <item|category> <count> - keep/restock e.g. 'keep add axe 1', 'keep add food 64'",
+                "> lumber keep remove <item|category> / keep clear / keep list",
                 "> lumber wood include|exclude <flavour> - pick wood types (default: all)",
                 "  flavours: " + String.join(" ", Woods.names()),
                 "> lumber replant on|off - replant saplings on cleared ground (default off)",

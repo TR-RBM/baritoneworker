@@ -168,6 +168,8 @@ public final class BuilderWorker {
             return;
         }
 
+        if (Baritones.isUserPaused(baritone)) return;
+
         ticksInState++;
 
         switch (state) {
@@ -579,8 +581,9 @@ public final class BuilderWorker {
 
     private void enterServiceChests(Minecraft mc) {
         blocksBeforeService = ContainerService.countMatching(mc.player.getInventory(), this::isMaterial);
-        int found = chestRoute.begin(mc, config.chestBoxes, config.includeEnderChests,
-                config.clickDelayTicks, config.chestPathTimeoutTicks, true, restockHandler);
+        int found = chestRoute.begin(mc, config.restockArea(), config.includeEnderChests,
+                config.clickDelayTicks, config.chestPathTimeoutTicks, true,
+                ChestRoute.Mode.WITHDRAW_ONLY, restockHandler);
         if (found > 0) {
             chat(mc, "Found §e" + found + "§r supply chest(s).");
         }
@@ -607,10 +610,8 @@ public final class BuilderWorker {
 
     private int nextSupplyWithdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
         Inventory inv = mc.player.getInventory();
-        if (config.targetFood - ContainerService.countItem(inv, config.foodItem) > 0) {
-            int s = ContainerService.nextWithdrawSlot(menu, config.foodItem);
-            if (s != -1) return s;
-        }
+        int s = config.equip.nextWithdrawSlot(menu, inv);
+        if (s != -1) return s;
         if (ContainerService.freeSlots(inv) > 0) {
             return ContainerService.nextWithdrawSlotMatching(menu,
                     item -> isMaterial(item) && needMore(inv, item));
@@ -620,7 +621,7 @@ public final class BuilderWorker {
 
     private boolean moreWorkToDo(Minecraft mc) {
         Inventory inv = mc.player.getInventory();
-        if (config.targetFood - ContainerService.countItem(inv, config.foodItem) > 0) return true;
+        if (!config.equip.fullyStocked(inv)) return true;
         if (ContainerService.freeSlots(inv) <= 0) return false;
         return stillNeedMaterials(inv);
     }
@@ -628,7 +629,6 @@ public final class BuilderWorker {
     private void finishService(Minecraft mc) {
         Inventory inv = mc.player.getInventory();
         int blocks = ContainerService.countMatching(inv, this::isMaterial);
-        int food = ContainerService.countItem(inv, config.foodItem);
         if (blocks == 0) {
             chat(mc, "§cChecked " + chestRoute.visitedCount() + " chest(s) but found none of the blocks the build needs ("
                     + neededSummary() + ") — stopping. Make sure those blocks are in the supply chests.");
@@ -638,7 +638,7 @@ public final class BuilderWorker {
         if (blocks <= blocksBeforeService) {
             chat(mc, "§eCouldn't add more blocks (chests low) — building with what's on hand (blocks=" + blocks + ").");
         } else {
-            chat(mc, "Restocked (blocks=" + blocks + ", food=" + food + "). Back to building.");
+            chat(mc, "Restocked (blocks=" + blocks + "). Back to building.");
         }
         setState(mc, BuilderState.GO_TO_WORK);
     }

@@ -3,11 +3,10 @@ package com.luna0wl.baritoneworker.worker.mover;
 import baritone.api.IBaritone;
 import baritone.api.command.Command;
 import baritone.api.command.argument.IArgConsumer;
-import baritone.api.selection.ISelection;
-import baritone.api.utils.BetterBlockPos;
+import com.luna0wl.baritoneworker.worker.common.AreaSelection;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
+import net.minecraft.core.BlockPos;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
@@ -19,6 +18,8 @@ public final class MoverCommand extends Command {
 
     private final MoverWorker worker;
     private final MoverConfig config;
+    private final AreaSelection sourceSel = new AreaSelection();
+    private final AreaSelection destSel = new AreaSelection();
 
     public MoverCommand(IBaritone baritone, MoverWorker worker, MoverConfig config) {
         super(baritone, "mover");
@@ -51,9 +52,9 @@ public final class MoverCommand extends Command {
 
     private void doEndpoint(IArgConsumer args, boolean source) {
         String which = source ? "source" : "dest";
-        if (args.hasAny()) {
-            String op = args.getString().toLowerCase(Locale.ROOT);
-            if (op.equals("home")) {
+        String op = args.hasAny() ? args.getString().toLowerCase(Locale.ROOT) : "status";
+        switch (op) {
+            case "home" -> {
                 String name = args.hasAny() ? args.getString() : null;
                 if (name == null) {
                     logDirect((source ? config.sourceHome : config.destHome) + " is the current " + which + " home.");
@@ -62,32 +63,39 @@ public final class MoverCommand extends Command {
                 if (source) config.sourceHome = name; else config.destHome = name;
                 config.save();
                 logDirect(which + "Home = §e" + name);
-                return;
             }
-            if (op.equals("clear")) {
-                if (source) config.setSource(List.of()); else config.setDest(List.of());
+            case "clear" -> {
+                if (source) { config.setSource(List.of()); sourceSel.clear(); }
+                else { config.setDest(List.of()); destSel.clear(); }
                 config.save();
                 logDirect(which + " area cleared.");
-                return;
             }
-            logDirect("Usage: §e#mover " + which + "§r [home <name>|clear] — no arg captures the selection.");
+            case "corner1" -> captureCorner(source, false);
+            case "corner2" -> captureCorner(source, true);
+            case "status" -> logDirect(which + " area: §e" + (source ? config.sourceBoxes.size() : config.destBoxes.size())
+                    + "§r box(es) " + ((source ? config.hasSource() : config.hasDest()) ? "" : "§c(not set)")
+                    + "  pending: " + (source ? sourceSel : destSel).status());
+            default -> logDirect("Usage: §e#mover " + which + "§r corner1|corner2|home <name>|clear|status");
+        }
+    }
+
+    private void captureCorner(boolean source, boolean second) {
+        String which = source ? "source" : "dest";
+        AreaSelection sel = source ? sourceSel : destSel;
+        BlockPos feet = ctx.playerFeet();
+        if (second) sel.setCorner2(feet);
+        else sel.setCorner1(feet);
+        logDirect("§a" + which + " corner " + (second ? "2" : "1") + " = §r"
+                + feet.getX() + "," + feet.getY() + "," + feet.getZ());
+        if (!sel.ready()) {
+            logDirect("§7Now stand on the opposite corner and run §e#mover " + which + " corner" + (second ? "1" : "2") + "§7.");
             return;
         }
-        ISelection[] sels = baritone.getSelectionManager().getSelections();
-        if (sels == null || sels.length == 0) {
-            logDirect("§cNo Baritone selection found. Make one with §e#sel 1§c / §e#sel 2§c first.");
-            return;
-        }
-        List<int[]> boxes = new ArrayList<>();
-        for (ISelection s : sels) {
-            BetterBlockPos mn = s.min();
-            BetterBlockPos mx = s.max();
-            boxes.add(new int[]{mn.x, mn.y, mn.z, mx.x, mx.y, mx.z});
-        }
+        List<int[]> boxes = sel.boxes();
         if (source) config.setSource(boxes); else config.setDest(boxes);
         config.save();
         int chests = ContainerService.scanChests(ctx.world(), boxes, ctx.playerFeet()).size();
-        logDirect("Captured §e" + boxes.size() + "§r box(es) as the §e" + which + "§r area — §e" + chests + "§r chest(s).");
+        logDirect("Captured the §e" + which + "§r area — §e" + chests + "§r chest(s).");
     }
 
     private void doMode(IArgConsumer args) {
@@ -133,15 +141,15 @@ public final class MoverCommand extends Command {
                 "",
                 "Setup:",
                 "- Set Essentials homes by each room (defaults 'source' and 'Home').",
-                "- Select the source room with #sel 1 / #sel 2, run #mover source.",
-                "- Select the destination room, run #mover dest.",
+                "- Stand on the source room's corners: #mover source corner1, then corner2.",
+                "- Do the same for the destination: #mover dest corner1 / corner2.",
                 "- Run with an EMPTY inventory.",
                 "",
                 "Usage:",
                 "> mover - show status",
                 "> mover start / stop",
-                "> mover source [home <name>|clear] - capture selection as source (or set its home)",
-                "> mover dest [home <name>|clear] - capture selection as destination (or set its home)",
+                "> mover source corner1|corner2|home <name>|clear|status - the source area",
+                "> mover dest corner1|corner2|home <name>|clear|status - the destination area",
                 "> mover mode copy|sort - copy = chest N→N; sort = re-sort at dest by the scheme",
                 "",
                 "SORT mode reuses the #sorter scheme (signs + sortscheme.json) at the destination."

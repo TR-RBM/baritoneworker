@@ -1,10 +1,8 @@
 package com.luna0wl.baritoneworker.worker.miner;
 
-import com.luna0wl.baritoneworker.worker.common.ItemNames;
+import com.luna0wl.baritoneworker.worker.common.WorkerEquip;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.item.Item;
-import net.minecraft.world.item.Items;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,17 +25,9 @@ public final class MinerConfig {
 
     public String baseHome = "Home";
 
-    public Item pickaxeItem = Items.DIAMOND_PICKAXE;
+    public WorkerEquip equip = defaultEquip();
 
-    public Item shovelItem = Items.DIAMOND_SHOVEL;
-
-    public Item foodItem = Items.BAKED_POTATO;
-
-    public int targetPickaxes = 2;
-
-    public int targetShovels = 1;
-
-    public int targetFood = 64;
+    public String restockHome = "";
 
     public int stopAtFreeSlots = 1;
 
@@ -60,35 +50,13 @@ public final class MinerConfig {
 
     public int chestPathTimeoutTicks = 1200;
 
-    public final Set<Item> extraKeepItems = new LinkedHashSet<>(List.of(Items.TORCH));
-
-    public final Set<Item> keepItems = new LinkedHashSet<>();
-
-    public MinerConfig() {
-        rebuildKeep();
-    }
-
-    public void rebuildKeep() {
-        keepItems.clear();
-        keepItems.add(pickaxeItem);
-        keepItems.add(shovelItem);
-        keepItems.add(foodItem);
-        keepItems.addAll(extraKeepItems);
-    }
-
-    public void setPickaxeItem(Item item) {
-        pickaxeItem = item;
-        rebuildKeep();
-    }
-
-    public void setShovelItem(Item item) {
-        shovelItem = item;
-        rebuildKeep();
-    }
-
-    public void setFoodItem(Item item) {
-        foodItem = item;
-        rebuildKeep();
+    private static WorkerEquip defaultEquip() {
+        WorkerEquip eq = new WorkerEquip();
+        eq.add("minecraft:diamond_pickaxe", 2);
+        eq.add("minecraft:diamond_shovel", 1);
+        eq.add("minecraft:baked_potato", 64);
+        eq.add("minecraft:torch", 64);
+        return eq;
     }
 
     public boolean mineExposedOres = false;
@@ -102,6 +70,8 @@ public final class MinerConfig {
     public final Set<String> excludedOreGroups = new LinkedHashSet<>();
 
     public final List<int[]> chestBoxes = new ArrayList<>();
+
+    public final List<int[]> restockBoxes = new ArrayList<>();
 
     public boolean includeEnderChests = false;
 
@@ -118,6 +88,27 @@ public final class MinerConfig {
 
     public boolean hasArea() {
         return !chestBoxes.isEmpty();
+    }
+
+    public void setRestock(List<int[]> boxes) {
+        restockBoxes.clear();
+        restockBoxes.addAll(boxes);
+    }
+
+    public void clearRestock() {
+        restockBoxes.clear();
+    }
+
+    public boolean hasRestock() {
+        return !restockBoxes.isEmpty();
+    }
+
+    public List<int[]> depositArea() {
+        return chestBoxes;
+    }
+
+    public List<int[]> restockArea() {
+        return hasRestock() ? restockBoxes : chestBoxes;
     }
 
     public boolean areaContains(BlockPos pos) {
@@ -138,12 +129,8 @@ public final class MinerConfig {
         Properties p = new Properties();
         p.setProperty("mineHome", mineHome);
         p.setProperty("baseHome", baseHome);
-        p.setProperty("pickaxeItem", ItemNames.idOf(pickaxeItem));
-        p.setProperty("shovelItem", ItemNames.idOf(shovelItem));
-        p.setProperty("foodItem", ItemNames.idOf(foodItem));
-        p.setProperty("targetPickaxes", Integer.toString(targetPickaxes));
-        p.setProperty("targetShovels", Integer.toString(targetShovels));
-        p.setProperty("targetFood", Integer.toString(targetFood));
+        p.setProperty("restockHome", restockHome);
+        p.setProperty("keep", equip.serialize());
         p.setProperty("stopAtFreeSlots", Integer.toString(stopAtFreeSlots));
         p.setProperty("teleportTimeoutTicks", Integer.toString(teleportTimeoutTicks));
         p.setProperty("teleportSettleTicks", Integer.toString(teleportSettleTicks));
@@ -163,7 +150,8 @@ public final class MinerConfig {
         p.setProperty("excludedOreGroups", String.join(",", excludedOreGroups));
         p.setProperty("includeEnderChests", Boolean.toString(includeEnderChests));
         p.setProperty("debug", Boolean.toString(debug));
-        p.setProperty("chestBoxes", serializeBoxes());
+        p.setProperty("chestBoxes", serializeBoxes(chestBoxes));
+        p.setProperty("restockBoxes", serializeBoxes(restockBoxes));
         try {
             Files.createDirectories(file().getParent());
             try (OutputStream out = Files.newOutputStream(file())) {
@@ -186,15 +174,13 @@ public final class MinerConfig {
         }
         mineHome = p.getProperty("mineHome", mineHome);
         baseHome = p.getProperty("baseHome", baseHome);
-        Item pi = ItemNames.byId(p.getProperty("pickaxeItem", ""));
-        if (pi != null) pickaxeItem = pi;
-        Item si = ItemNames.byId(p.getProperty("shovelItem", ""));
-        if (si != null) shovelItem = si;
-        Item fi = ItemNames.byId(p.getProperty("foodItem", ""));
-        if (fi != null) foodItem = fi;
-        targetPickaxes = parseInt(p, "targetPickaxes", targetPickaxes);
-        targetShovels = parseInt(p, "targetShovels", targetShovels);
-        targetFood = parseInt(p, "targetFood", targetFood);
+        restockHome = p.getProperty("restockHome", restockHome);
+        String keepStr = p.getProperty("keep");
+        if (keepStr != null) {
+            equip = WorkerEquip.deserialize(keepStr);
+        } else {
+            equip = migrateLegacyEquip(p);
+        }
         stopAtFreeSlots = parseInt(p, "stopAtFreeSlots", stopAtFreeSlots);
         teleportTimeoutTicks = parseInt(p, "teleportTimeoutTicks", teleportTimeoutTicks);
         teleportSettleTicks = parseInt(p, "teleportSettleTicks", teleportSettleTicks);
@@ -217,8 +203,17 @@ public final class MinerConfig {
         }
         includeEnderChests = Boolean.parseBoolean(p.getProperty("includeEnderChests", Boolean.toString(includeEnderChests)));
         debug = Boolean.parseBoolean(p.getProperty("debug", Boolean.toString(debug)));
-        deserializeBoxes(p.getProperty("chestBoxes", ""));
-        rebuildKeep();
+        deserializeBoxes(chestBoxes, p.getProperty("chestBoxes", ""));
+        deserializeBoxes(restockBoxes, p.getProperty("restockBoxes", ""));
+    }
+
+    private static WorkerEquip migrateLegacyEquip(Properties p) {
+        WorkerEquip eq = new WorkerEquip();
+        eq.add(p.getProperty("pickaxeItem", "minecraft:diamond_pickaxe"), parseInt(p, "targetPickaxes", 2));
+        eq.add(p.getProperty("shovelItem", "minecraft:diamond_shovel"), parseInt(p, "targetShovels", 1));
+        eq.add(p.getProperty("foodItem", "minecraft:baked_potato"), parseInt(p, "targetFood", 64));
+        eq.add("minecraft:torch", 64);
+        return eq;
     }
 
     private static int parseInt(Properties p, String key, int fallback) {
@@ -257,9 +252,9 @@ public final class MinerConfig {
         }
     }
 
-    private String serializeBoxes() {
+    private static String serializeBoxes(List<int[]> src) {
         StringBuilder sb = new StringBuilder();
-        for (int[] b : chestBoxes) {
+        for (int[] b : src) {
             if (sb.length() > 0) sb.append(';');
             for (int i = 0; i < 6; i++) {
                 if (i > 0) sb.append(',');
@@ -269,8 +264,8 @@ public final class MinerConfig {
         return sb.toString();
     }
 
-    private void deserializeBoxes(String s) {
-        chestBoxes.clear();
+    private static void deserializeBoxes(List<int[]> dst, String s) {
+        dst.clear();
         if (s == null || s.isBlank()) return;
         for (String boxStr : s.split(";")) {
             String[] parts = boxStr.split(",");
@@ -278,7 +273,7 @@ public final class MinerConfig {
             try {
                 int[] b = new int[6];
                 for (int i = 0; i < 6; i++) b[i] = Integer.parseInt(parts[i].trim());
-                chestBoxes.add(b);
+                dst.add(b);
             } catch (NumberFormatException ignored) {
 
             }

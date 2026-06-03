@@ -8,6 +8,7 @@ import com.luna0wl.baritoneworker.worker.common.ChestRoute;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
 import com.luna0wl.baritoneworker.worker.common.MenuActions;
 import com.luna0wl.baritoneworker.worker.common.Teleporter;
+import com.luna0wl.baritoneworker.worker.common.WorkerEquip;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.core.BlockPos;
@@ -46,6 +47,10 @@ public final class LumberWorker {
     private LumberState state = LumberState.IDLE;
     private int ticksInState;
     private IBaritone baritone;
+
+    private ChestRoute.Mode serviceMode = ChestRoute.Mode.DEPOSIT_WITHDRAW;
+    private String serviceCacheKey = "lumber";
+    private java.util.List<int[]> serviceBoxes = java.util.List.of();
 
     private int harvestIdleTicks;
 
@@ -94,7 +99,7 @@ public final class LumberWorker {
             return;
         }
         if (!config.hasArea()) {
-            chat(mc, "§cNo chest area set. Make a Baritone selection (#sel 1 / #sel 2) then run §e#lumber area§c.");
+            chat(mc, "§cNo chest area set. Stand on a corner and run §e#lumber corner1§c, then the opposite corner and §e#lumber corner2§c.");
             return;
         }
         baritone = null;
@@ -104,11 +109,7 @@ public final class LumberWorker {
                 + "§a replant=§e" + (config.replant ? "on" : "off"));
 
         Inventory inv = mc.player.getInventory();
-        int axes = ContainerService.countItem(inv, config.axeItem);
-        int food = ContainerService.countItem(inv, config.foodItem);
-        boolean lowSaplings = config.replant
-                && ContainerService.countMatching(inv, Woods.saplings(config.woodFlavours)::contains) < config.targetSaplings;
-        if (axes < config.targetAxes || food < config.targetFood || lowSaplings) {
+        if (needSupplies(inv)) {
             chat(mc, "Low on supplies — restocking first.");
             setState(mc, LumberState.GO_TO_HOME);
         } else {
@@ -142,6 +143,8 @@ public final class LumberWorker {
             return;
         }
 
+        if (Baritones.isUserPaused(baritone)) return;
+
         ticksInState++;
         if (replantClickCooldown > 0) replantClickCooldown--;
 
@@ -150,7 +153,8 @@ public final class LumberWorker {
             case HARVEST -> tickHarvest(mc);
             case RESET_HOME -> tickResetHome(mc);
             case GO_TO_HOME -> tickGoToHome(mc);
-            case SERVICE_CHESTS -> tickServiceChests(mc);
+            case SERVICE_CHESTS, SERVICE_DEPOSIT, SERVICE_RESTOCK -> tickServiceChests(mc);
+            case GO_TO_RESTOCK -> tickGoToRestock(mc);
             default -> { }
         }
     }
@@ -189,15 +193,29 @@ public final class LumberWorker {
             case GO_TO_HOME -> {
                 if (alreadyAtBase(mc)) {
                     chat(mc, "Already at base — servicing chests without teleport.");
-                    setState(mc, LumberState.SERVICE_CHESTS);
+                    setState(mc, firstServiceState());
                 } else {
                     teleporter.begin(mc);
                     sendCommand(mc, "home " + config.baseHome);
                 }
             }
-            case SERVICE_CHESTS -> enterServiceChests(mc);
+            case SERVICE_CHESTS -> enterService(mc, config.depositArea(), ChestRoute.Mode.DEPOSIT_WITHDRAW, "lumber");
+            case SERVICE_DEPOSIT -> enterService(mc, config.depositArea(), ChestRoute.Mode.DEPOSIT_ONLY, "lumber");
+            case GO_TO_RESTOCK -> {
+                if (config.restockHome.isBlank()) {
+                    setState(mc, LumberState.SERVICE_RESTOCK);
+                } else {
+                    teleporter.begin(mc);
+                    sendCommand(mc, "home " + config.restockHome);
+                }
+            }
+            case SERVICE_RESTOCK -> enterService(mc, config.restockArea(), ChestRoute.Mode.WITHDRAW_ONLY, "lumber-restock");
             default -> { }
         }
+    }
+
+    private LumberState firstServiceState() {
+        return config.hasRestock() ? LumberState.SERVICE_DEPOSIT : LumberState.SERVICE_CHESTS;
     }
 
     private boolean teleportArrived(Minecraft mc) {
@@ -399,7 +417,14 @@ public final class LumberWorker {
             config.homePos = posOf(mc);
             config.save();
             chat(mc, "At base — servicing chests.");
-            setState(mc, LumberState.SERVICE_CHESTS);
+            setState(mc, firstServiceState());
+        }
+    }
+
+    private void tickGoToRestock(Minecraft mc) {
+        if (teleportArrived(mc)) {
+            chat(mc, "At the restock area — withdrawing supplies.");
+            setState(mc, LumberState.SERVICE_RESTOCK);
         }
     }
 
@@ -539,9 +564,12 @@ public final class LumberWorker {
         return false;
     }
 
-    private void enterServiceChests(Minecraft mc) {
-        int found = chestRoute.begin(mc, config.chestBoxes, config.includeEnderChests,
-                config.clickDelayTicks, config.chestPathTimeoutTicks, false, serviceHandler);
+    private void enterService(Minecraft mc, java.util.List<int[]> boxes, ChestRoute.Mode mode, String cacheKey) {
+        serviceMode = mode;
+        serviceCacheKey = cacheKey;
+        serviceBoxes = boxes;
+        int found = chestRoute.begin(mc, boxes, config.includeEnderChests,
+                config.clickDelayTicks, config.chestPathTimeoutTicks, false, mode, serviceHandler);
         if (found > 0) {
             chat(mc, "Found §e" + found + "§r chest(s) to service.");
         }
@@ -566,45 +594,51 @@ public final class LumberWorker {
         }
     }
 
-    private int nextSupplyWithdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
+    private Set<Item> saplingSet() {
+        return Woods.saplings(config.woodFlavours);
+    }
+
+    private boolean keepHere(Item it) {
+        if (config.equip.isKept(it)) return true;
+        return config.replant && saplingSet().contains(it);
+    }
+
+    private boolean needSupplies(Inventory inv) {
+        if (!config.equip.fullyStocked(inv)) return true;
+        if (config.replant && config.targetSaplings - ContainerService.countMatching(inv, saplingSet()::contains) > 0) {
+            return true;
+        }
+        return false;
+    }
+
+    private int withdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
         Inventory inv = mc.player.getInventory();
-        if (config.targetAxes - ContainerService.countItem(inv, config.axeItem) > 0) {
-            int s = ContainerService.nextWithdrawSlot(menu, config.axeItem);
-            if (s != -1) return s;
-        }
-        if (config.targetFood - ContainerService.countItem(inv, config.foodItem) > 0) {
-            int s = ContainerService.nextWithdrawSlot(menu, config.foodItem);
-            if (s != -1) return s;
-        }
-        if (config.replant) {
-            Set<Item> saplings = Woods.saplings(config.woodFlavours);
-            if (config.targetSaplings - ContainerService.countMatching(inv, saplings::contains) > 0) {
-                return ContainerService.nextWithdrawSlotMatching(menu, saplings::contains);
-            }
+        int s = config.equip.nextWithdrawSlot(menu, inv);
+        if (s != -1) return s;
+        if (config.replant && config.targetSaplings - ContainerService.countMatching(inv, saplingSet()::contains) > 0) {
+            return ContainerService.nextWithdrawSlotMatching(menu, saplingSet()::contains);
         }
         return -1;
     }
 
     private boolean moreWorkToDo(Minecraft mc) {
         Inventory inv = mc.player.getInventory();
-        if (config.targetAxes - ContainerService.countItem(inv, config.axeItem) > 0) return true;
-        if (config.targetFood - ContainerService.countItem(inv, config.foodItem) > 0) return true;
-        if (config.replant) {
-            Set<Item> saplings = Woods.saplings(config.woodFlavours);
-            if (config.targetSaplings - ContainerService.countMatching(inv, saplings::contains) > 0) return true;
-        }
-        return ContainerService.hasDepositable(mc.player.inventoryMenu, config.keepItems);
+        boolean wantWithdraw = serviceMode != ChestRoute.Mode.DEPOSIT_ONLY && needSupplies(inv);
+        boolean wantDeposit = serviceMode != ChestRoute.Mode.WITHDRAW_ONLY
+                && ContainerService.nextDepositSlotMatching(mc.player.inventoryMenu, it -> !keepHere(it)) != -1;
+        return wantWithdraw || wantDeposit;
     }
 
     private void finishService(Minecraft mc) {
+        if (state == LumberState.SERVICE_DEPOSIT) {
+            setState(mc, LumberState.GO_TO_RESTOCK);
+            return;
+        }
         Inventory inv = mc.player.getInventory();
-        int axes = ContainerService.countItem(inv, config.axeItem);
-        int food = ContainerService.countItem(inv, config.foodItem);
-        if (moreWorkToDo(mc)) {
-            chat(mc, "§eService incomplete (axes=" + axes + ", food=" + food
-                    + ") — chests may be full or out of supplies. Continuing anyway.");
+        if (needSupplies(inv)) {
+            chat(mc, "§eService incomplete — chests may be full or out of supplies. Continuing anyway.");
         } else {
-            chat(mc, "Serviced chests (axes=" + axes + ", food=" + food + "). Back to chopping.");
+            chat(mc, "Serviced chests. Back to chopping.");
         }
         setState(mc, LumberState.GO_TO_WORK);
     }
@@ -612,12 +646,12 @@ public final class LumberWorker {
     private final class ServiceHandler implements ChestRoute.Handler {
         @Override
         public int nextDepositSlot(Minecraft mc, AbstractContainerMenu menu) {
-            return ContainerService.nextDepositSlot(menu, config.keepItems);
+            return ContainerService.nextDepositSlotMatching(menu, it -> !keepHere(it));
         }
 
         @Override
         public int nextWithdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
-            return nextSupplyWithdrawSlot(mc, menu);
+            return withdrawSlot(mc, menu);
         }
 
         @Override
@@ -632,7 +666,7 @@ public final class LumberWorker {
 
         @Override
         public String cacheKey() {
-            return "lumber";
+            return serviceCacheKey;
         }
     }
 

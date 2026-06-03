@@ -1,10 +1,8 @@
 package com.luna0wl.baritoneworker.worker.lumber;
 
-import com.luna0wl.baritoneworker.worker.common.ItemNames;
+import com.luna0wl.baritoneworker.worker.common.WorkerEquip;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.item.Item;
-import net.minecraft.world.item.Items;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,12 +25,9 @@ public final class LumberConfig {
 
     public String baseHome = "Home";
 
-    public Item axeItem = Items.DIAMOND_AXE;
+    public WorkerEquip equip = defaultEquip();
 
-    public Item foodItem = Items.BAKED_POTATO;
-
-    public int targetAxes = 1;
-    public int targetFood = 64;
+    public String restockHome = "";
 
     public int stopAtFreeSlots = 1;
 
@@ -72,34 +67,19 @@ public final class LumberConfig {
 
     public final List<int[]> chestBoxes = new ArrayList<>();
 
+    public final List<int[]> restockBoxes = new ArrayList<>();
+
     public boolean includeEnderChests = false;
 
-    public final Set<Item> keepItems = new LinkedHashSet<>();
-
-    public LumberConfig() {
-        rebuildKeep();
-    }
-
-    public void rebuildKeep() {
-        keepItems.clear();
-        keepItems.add(axeItem);
-        keepItems.add(foodItem);
-        if (replant) keepItems.addAll(Woods.saplings(woodFlavours));
-    }
-
-    public void setAxeItem(Item item) {
-        axeItem = item;
-        rebuildKeep();
-    }
-
-    public void setFoodItem(Item item) {
-        foodItem = item;
-        rebuildKeep();
+    private static WorkerEquip defaultEquip() {
+        WorkerEquip eq = new WorkerEquip();
+        eq.add("minecraft:diamond_axe", 1);
+        eq.add("minecraft:baked_potato", 64);
+        return eq;
     }
 
     public void setReplant(boolean on) {
         replant = on;
-        rebuildKeep();
     }
 
     public void setArea(List<int[]> boxes) {
@@ -115,6 +95,27 @@ public final class LumberConfig {
         return !chestBoxes.isEmpty();
     }
 
+    public void setRestock(List<int[]> boxes) {
+        restockBoxes.clear();
+        restockBoxes.addAll(boxes);
+    }
+
+    public void clearRestock() {
+        restockBoxes.clear();
+    }
+
+    public boolean hasRestock() {
+        return !restockBoxes.isEmpty();
+    }
+
+    public List<int[]> depositArea() {
+        return chestBoxes;
+    }
+
+    public List<int[]> restockArea() {
+        return hasRestock() ? restockBoxes : chestBoxes;
+    }
+
     private static Path file() {
         return FabricLoader.getInstance().getConfigDir().resolve("baritoneworker").resolve("lumber.properties");
     }
@@ -123,10 +124,8 @@ public final class LumberConfig {
         Properties p = new Properties();
         p.setProperty("workHome", workHome);
         p.setProperty("baseHome", baseHome);
-        p.setProperty("axeItem", ItemNames.idOf(axeItem));
-        p.setProperty("foodItem", ItemNames.idOf(foodItem));
-        p.setProperty("targetAxes", Integer.toString(targetAxes));
-        p.setProperty("targetFood", Integer.toString(targetFood));
+        p.setProperty("restockHome", restockHome);
+        p.setProperty("keep", equip.serialize());
         p.setProperty("stopAtFreeSlots", Integer.toString(stopAtFreeSlots));
         p.setProperty("teleportTimeoutTicks", Integer.toString(teleportTimeoutTicks));
         p.setProperty("teleportSettleTicks", Integer.toString(teleportSettleTicks));
@@ -149,7 +148,8 @@ public final class LumberConfig {
         p.setProperty("includeEnderChests", Boolean.toString(includeEnderChests));
         p.setProperty("workPos", serializePos(workPos));
         p.setProperty("homePos", serializePos(homePos));
-        p.setProperty("chestBoxes", serializeBoxes());
+        p.setProperty("chestBoxes", serializeBoxes(chestBoxes));
+        p.setProperty("restockBoxes", serializeBoxes(restockBoxes));
         try {
             Files.createDirectories(file().getParent());
             try (OutputStream out = Files.newOutputStream(file())) {
@@ -172,12 +172,13 @@ public final class LumberConfig {
         }
         workHome = p.getProperty("workHome", workHome);
         baseHome = p.getProperty("baseHome", baseHome);
-        Item ai = ItemNames.byId(p.getProperty("axeItem", ""));
-        if (ai != null) axeItem = ai;
-        Item fi = ItemNames.byId(p.getProperty("foodItem", ""));
-        if (fi != null) foodItem = fi;
-        targetAxes = parseInt(p, "targetAxes", targetAxes);
-        targetFood = parseInt(p, "targetFood", targetFood);
+        restockHome = p.getProperty("restockHome", restockHome);
+        String keepStr = p.getProperty("keep");
+        if (keepStr != null) {
+            equip = WorkerEquip.deserialize(keepStr);
+        } else {
+            equip = migrateLegacyEquip(p);
+        }
         stopAtFreeSlots = parseInt(p, "stopAtFreeSlots", stopAtFreeSlots);
         teleportTimeoutTicks = parseInt(p, "teleportTimeoutTicks", teleportTimeoutTicks);
         teleportSettleTicks = parseInt(p, "teleportSettleTicks", teleportSettleTicks);
@@ -203,8 +204,15 @@ public final class LumberConfig {
         includeEnderChests = Boolean.parseBoolean(p.getProperty("includeEnderChests", Boolean.toString(includeEnderChests)));
         workPos = deserializePos(p.getProperty("workPos", ""));
         homePos = deserializePos(p.getProperty("homePos", ""));
-        deserializeBoxes(p.getProperty("chestBoxes", ""));
-        rebuildKeep();
+        deserializeBoxes(chestBoxes, p.getProperty("chestBoxes", ""));
+        deserializeBoxes(restockBoxes, p.getProperty("restockBoxes", ""));
+    }
+
+    private static WorkerEquip migrateLegacyEquip(Properties p) {
+        WorkerEquip eq = new WorkerEquip();
+        eq.add(p.getProperty("axeItem", "minecraft:diamond_axe"), parseInt(p, "targetAxes", 1));
+        eq.add(p.getProperty("foodItem", "minecraft:baked_potato"), parseInt(p, "targetFood", 64));
+        return eq;
     }
 
     private static int parseInt(Properties p, String key, int fallback) {
@@ -243,9 +251,9 @@ public final class LumberConfig {
         }
     }
 
-    private String serializeBoxes() {
+    private static String serializeBoxes(List<int[]> src) {
         StringBuilder sb = new StringBuilder();
-        for (int[] b : chestBoxes) {
+        for (int[] b : src) {
             if (sb.length() > 0) sb.append(';');
             for (int i = 0; i < 6; i++) {
                 if (i > 0) sb.append(',');
@@ -255,8 +263,8 @@ public final class LumberConfig {
         return sb.toString();
     }
 
-    private void deserializeBoxes(String s) {
-        chestBoxes.clear();
+    private static void deserializeBoxes(List<int[]> dst, String s) {
+        dst.clear();
         if (s == null || s.isBlank()) return;
         for (String boxStr : s.split(";")) {
             String[] parts = boxStr.split(",");
@@ -264,7 +272,7 @@ public final class LumberConfig {
             try {
                 int[] b = new int[6];
                 for (int i = 0; i < 6; i++) b[i] = Integer.parseInt(parts[i].trim());
-                chestBoxes.add(b);
+                dst.add(b);
             } catch (NumberFormatException ignored) {
 
             }

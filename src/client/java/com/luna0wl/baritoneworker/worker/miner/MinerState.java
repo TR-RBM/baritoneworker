@@ -12,5 +12,11 @@ public enum MinerState {
 
     GO_TO_HOME,
 
-    SERVICE_CHESTS
+    SERVICE_CHESTS,
+
+    SERVICE_DEPOSIT,
+
+    GO_TO_RESTOCK,
+
+    SERVICE_RESTOCK
 }

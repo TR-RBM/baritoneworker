@@ -3,7 +3,9 @@
 A pack of **autonomous [Baritone](https://github.com/cabaletta/baritone) workers** for
 Minecraft **26.1.2** on [Fabric](https://fabricmc.net/). Each one drives an unattended
 loop on a server using Essentials-style home commands ([`/home`, `/sethome`,
-`/delhome`](https://essentialsx.net/)) and Baritone selections (`#sel`).
+`/delhome`](https://essentialsx.net/)). The workers capture their own areas (no
+`#sel` needed) and respect Baritone's manual `#pause`/`#resume`, so core Baritone
+commands and the workers no longer trip over each other.
 
 | Worker | Command | What it does |
 |--------|---------|--------------|
@@ -51,15 +53,34 @@ folder alongside Baritone.
 
 ## Shared concepts
 
-- **Areas** are captured from Baritone selections: aim at two corners with
-  `#sel 1` / `#sel 2`, then run the worker's `area` (or `source`/`dest`) command.
-  Chests, trapped chests and barrels in the box are found automatically; double
-  chests are handled once.
+- **Areas** are captured by the mod itself — stand on one corner of the room and run
+  the worker's `corner1`, then the opposite corner and `corner2` (the mover and any
+  second area use `source corner1`/`restock corner1`/… ). This is independent of
+  Baritone's own `#sel`, so `#sel` / `#sel ca` stay free for your own use. Chests,
+  trapped chests and barrels in the box are found automatically; double chests are
+  handled once. `area status` shows the current box; `area clear` forgets it.
+- **Respecting `#pause`.** Every worker watches Baritone's pathing controller; when
+  you manually `#pause` Baritone the worker cleanly suspends (it won't re-issue
+  `tunnel`/`mine`/`build` underneath you), and on `#resume` it picks up where it left
+  off. The builder's own *"out of materials"* pause is unaffected.
+- **Equipment / keep-list.** The miner, lumber and builder share one flexible
+  loadout: `keep add <item|category> <count>`. Entries can be exact ids
+  (`diamond_pickaxe`) or categories (`pickaxe`, `axe`, `shovel`, `sword`, `food`, …),
+  and they mix — e.g. `keep add stone_pickaxe 1` + `keep add diamond_pickaxe 1` keeps
+  one of each, while `keep add pickaxe 2` keeps any two pickaxes. Anything **not** on
+  the keep-list is deposited; anything below its count is restocked. `keep list`
+  shows it, `keep remove`/`keep clear` edit it.
+- **Separate restock area (optional).** By default a worker deposits loot and
+  restocks supplies in the same chest area. Set a distinct supply room with
+  `restock corner1` / `restock corner2` and the worker deposits in the chest area but
+  withdraws its keep-list items from the restock area instead (optionally teleporting
+  there first with `restock home <name>`). Leave it unset to keep the single-area
+  behaviour.
 - **Homes** are Essentials homes the worker teleports to. `/home` has a warm-up
   delay, so the workers wait for the actual position jump rather than a fixed
   timer.
-- **Kept items** are never deposited (the miner keeps its pickaxe/shovel/food/torches,
-  the lumber bot its axe/food/saplings). Armor and the off-hand are never touched.
+- **Kept items** are never deposited — they're the worker's keep-list (see above; the
+  lumber bot also keeps saplings while replanting). Armor and the off-hand are never touched.
 - **Restocking is wall-safe and never skips a chest.** While a worker services its
   supply chests it temporarily disables Baritone's block-breaking, so it won't tear
   through walls to reach a chest. It also won't quietly skip one: if a chest genuinely
@@ -88,22 +109,27 @@ Mine → tunnel → return when full → deposit + restock → repeat.
 
 1. `/sethome mine` at the tunnel face, **looking the way you want to dig**.
 2. `/sethome Home` by your storage room.
-3. `#sel 1` / `#sel 2` around the chest room, then `#miner area`.
+3. Stand on a corner of the chest room and `#miner corner1`, then the opposite corner and `#miner corner2`.
 4. Put spare pickaxes + shovels + food in those chests.
 5. `#miner start` (or the `\` keybind).
 
 | Command | Effect |
 |---------|--------|
 | `#miner start` / `stop` | run / halt |
-| `#miner area [clear]` | capture the current selection as the chest area |
-| `#miner pickaxe <n\|item>` | how many / which pickaxe to keep (default `2`, `diamond_pickaxe`) |
-| `#miner shovel <n\|item>` | how many / which shovel to keep (default `1`, `diamond_shovel`; `0` disables) |
-| `#miner food <n\|item>` | how much / which food to keep (default `64`, `baked_potato`) |
+| `#miner corner1` / `corner2` | capture the chest (deposit) area by standing on its corners |
+| `#miner area clear\|status` | manage the chest area |
+| `#miner restock corner1\|corner2\|clear\|status` | a separate supply area to restock from |
+| `#miner restock home <name\|clear>` | teleport to this home before restocking (default: base home) |
+| `#miner keep add <item\|category> <n>` | keep & restock, e.g. `keep add pickaxe 2`, `keep add diamond_pickaxe 1`, `keep add food 64` |
+| `#miner keep remove <item\|category>` / `keep clear` / `keep list` | edit the keep-list |
 | `#miner freeslots <n>` | return to base at this many free slots (default `1`) |
 | `#miner mine <name>` / `home <name>` | home names |
 | `#miner ender on\|off` | also service ender chests in the area (default off) |
 | `#miner ore on\|off` | also grab ore exposed in the tunnel walls (off by default) |
 | `#miner ore exclude\|include <group>` | e.g. `exclude coal` (bundles deepslate) |
+
+Defaults keep `diamond_pickaxe ×2`, `diamond_shovel ×1`, `baked_potato ×64`, `torch ×64`.
+Old `miner.properties` files migrate to the keep-list automatically on first load.
 
 Exposed-ore mining skips any ore touching lava/water (`#miner ore fluidcheck off`
 to disable). Groups: `coal iron copper gold redstone lapis diamond emerald`
@@ -118,22 +144,27 @@ selected log types, hauls the wood back, and restocks an axe + food (+ saplings
 when replanting).
 
 1. `/sethome wood` in the forest, `/sethome Home` by your storage room.
-2. `#sel 1` / `#sel 2` around the chest room, then `#lumber area`.
+2. Stand on a corner of the chest room and `#lumber corner1`, then the opposite corner and `#lumber corner2`.
 3. Stock spare axes + food (+ saplings if replanting) in those chests.
 4. `#lumber start`.
 
 | Command | Effect |
 |---------|--------|
 | `#lumber start` / `stop` | run / halt |
-| `#lumber area [clear]` | capture the current selection as the chest area |
-| `#lumber axe <n\|item>` | how many / which axe to keep (default `1`, `diamond_axe`) |
-| `#lumber food <n\|item>` | how much / which food to keep (default `64`) |
+| `#lumber corner1` / `corner2` | capture the chest (deposit) area by standing on its corners |
+| `#lumber area clear\|status` | manage the chest area |
+| `#lumber restock corner1\|corner2\|clear\|status` / `restock home <name\|clear>` | a separate supply area to restock from |
+| `#lumber keep add <item\|category> <n>` | keep & restock, e.g. `keep add axe 1`, `keep add food 64` |
+| `#lumber keep remove <item\|category>` / `keep clear` / `keep list` | edit the keep-list |
 | `#lumber wood include\|exclude <flavour>` | pick wood types (default: all) |
 | `#lumber replant on\|off` | replant saplings on cleared ground (default **off**) |
 | `#lumber sapling <n>` | saplings to keep when replanting (default `16`) |
 | `#lumber freeslots <n>` | return to base at this many free slots (default `1`) |
 | `#lumber work <name>` / `home <name>` | home names |
 | `#lumber ender on\|off` | also service ender chests in the area (default off) |
+
+Saplings are kept/restocked automatically while `replant` is on (they follow the
+selected wood flavours), separately from the keep-list.
 
 Flavours: `oak birch spruce jungle acacia dark_oak mangrove cherry pale_oak`.
 
@@ -172,7 +203,8 @@ over.
 | Command | Effect |
 |---------|--------|
 | `#sorter start` / `stop` | run / halt |
-| `#sorter area [clear]` | capture the current selection as the chest area |
+| `#sorter corner1` / `corner2` | capture the chest area by standing on its corners |
+| `#sorter area clear\|status` | manage the chest area |
 | `#sorter home <name>` | the chest-room home (default `Home`) |
 | `#sorter assign <tag…>` | pin tags onto the chest you're looking at |
 | `#sorter reload` | reload `sortscheme.json` from disk |
@@ -190,15 +222,15 @@ Empties every chest in a **source** area into a **destination** area, shuttling
 between two homes. **Run it with an empty inventory** — it is a bulk carrier.
 
 1. `/sethome source` by the source room, `/sethome Home` by the destination.
-2. `#sel 1` / `#sel 2` around the source, run `#mover source`.
-3. Select the destination, run `#mover dest`.
+2. Stand on the source room's corners: `#mover source corner1`, then `corner2`.
+3. Do the same for the destination: `#mover dest corner1` / `corner2`.
 4. `#mover mode copy` (or `sort`), then `#mover start`.
 
 | Command | Effect |
 |---------|--------|
 | `#mover start` / `stop` | run / halt |
-| `#mover source [home <name>\|clear]` | capture selection as the source (or set its home) |
-| `#mover dest [home <name>\|clear]` | capture selection as the destination (or set its home) |
+| `#mover source corner1\|corner2\|home <name>\|clear\|status` | capture/manage the source area |
+| `#mover dest corner1\|corner2\|home <name>\|clear\|status` | capture/manage the destination area |
 | `#mover mode copy\|sort` | `copy` = source chest N → dest chest N; `sort` = re-sort at dest by the sorter scheme |
 
 In **copy** mode each source chest's contents go to the matching destination
@@ -225,7 +257,7 @@ a `stopat` target is reached, or the supply runs out.
 1. Open/place your schematic in Litematica (or pick a file with `#builder file <name>`).
 2. `/sethome build` at the build site, `/sethome Home` by your supply room.
 3. Stock the supply room with the blocks the schematic needs (+ food).
-4. `#sel 1` / `#sel 2` around the supply room, then `#builder area`.
+4. Stand on a corner of the supply room and `#builder corner1`, then the opposite corner and `#builder corner2`.
 5. *(optional, for an endless `buildRepeat`)* set a finish line: `#builder stopat here`.
 6. `#builder start`.
 
@@ -234,8 +266,10 @@ a `stopat` target is reached, or the supply runs out.
 | Command | Effect |
 |---------|--------|
 | `#builder start` / `stop` | run / halt |
-| `#builder area [clear]` | capture the current selection as the supply area |
-| `#builder food <n\|item>` | how much / which food to keep (default `64`) |
+| `#builder corner1` / `corner2` | capture the supply area by standing on its corners |
+| `#builder area clear\|status` | manage the supply area |
+| `#builder keep add <item\|category> <n>` | extra items to withdraw alongside build blocks (e.g. `keep add food 64`) |
+| `#builder keep remove <item\|category>` / `keep clear` / `keep list` | edit the keep-list |
 | `#builder work <name>` / `home <name>` | build-site and base home names (default `build` / `Home`) |
 | `#builder litematic <index>` | which open Litematica placement to build (default `0`) |
 | `#builder file <name\|clear>` | build a schematic file from `schematics/` (`clear` = open placement) |
@@ -303,7 +337,8 @@ restocking it won't break walls to reach a chest and never skips one — see
 src/client/java/com/luna0wl/baritoneworker/
 ├── client/BaritoneWorkerClient.java   # init: keybind, tick driver, command registration
 └── worker/
-    ├── common/   # Baritones, Teleporter, MenuActions, ContainerService, ChestRoute, ItemNames, ItemCategories
+    ├── common/   # Baritones, Teleporter, MenuActions, ContainerService, ChestRoute,
+    │             # WorkerEquip (keep-list), AreaSelection (corner capture), ItemNames, ItemCategories
     ├── miner/    # MinerWorker, MinerConfig, MinerCommand, MinerState, Ores
     ├── lumber/   # LumberWorker, LumberConfig, LumberCommand, LumberState, Woods
     ├── sorter/   # SorterWorker, SorterConfig, SorterCommand, SortState, SortScheme

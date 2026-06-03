@@ -1,9 +1,7 @@
 package com.luna0wl.baritoneworker.worker.builder;
 
-import com.luna0wl.baritoneworker.worker.common.ItemNames;
+import com.luna0wl.baritoneworker.worker.common.WorkerEquip;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.world.item.Item;
-import net.minecraft.world.item.Items;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,8 +22,9 @@ public final class BuilderConfig {
 
     public String baseHome = "Home";
 
-    public Item foodItem = Items.BAKED_POTATO;
-    public int targetFood = 64;
+    public WorkerEquip equip = defaultEquip();
+
+    public String restockHome = "";
 
     public int litematicIndex = 0;
 
@@ -65,8 +64,10 @@ public final class BuilderConfig {
 
     public boolean includeEnderChests = false;
 
-    public void setFoodItem(Item item) {
-        foodItem = item;
+    private static WorkerEquip defaultEquip() {
+        WorkerEquip eq = new WorkerEquip();
+        eq.add("minecraft:baked_potato", 64);
+        return eq;
     }
 
     public void setArea(List<int[]> boxes) {
@@ -80,6 +81,10 @@ public final class BuilderConfig {
 
     public boolean hasArea() {
         return !chestBoxes.isEmpty();
+    }
+
+    public List<int[]> restockArea() {
+        return chestBoxes;
     }
 
     public boolean hasStop() {
@@ -98,8 +103,8 @@ public final class BuilderConfig {
         Properties p = new Properties();
         p.setProperty("workHome", workHome);
         p.setProperty("baseHome", baseHome);
-        p.setProperty("foodItem", ItemNames.idOf(foodItem));
-        p.setProperty("targetFood", Integer.toString(targetFood));
+        p.setProperty("restockHome", restockHome);
+        p.setProperty("keep", equip.serialize());
         p.setProperty("litematicIndex", Integer.toString(litematicIndex));
         p.setProperty("schematicFile", schematicFile == null ? "" : schematicFile);
         p.setProperty("buildOriginPos", serializePos(buildOriginPos));
@@ -145,9 +150,13 @@ public final class BuilderConfig {
         }
         workHome = p.getProperty("workHome", workHome);
         baseHome = p.getProperty("baseHome", baseHome);
-        Item fi = ItemNames.byId(p.getProperty("foodItem", ""));
-        if (fi != null) foodItem = fi;
-        targetFood = parseInt(p, "targetFood", targetFood);
+        restockHome = p.getProperty("restockHome", restockHome);
+        String keepStr = p.getProperty("keep");
+        if (keepStr != null) {
+            equip = WorkerEquip.deserialize(keepStr);
+        } else {
+            equip = migrateLegacyEquip(p);
+        }
         litematicIndex = parseInt(p, "litematicIndex", litematicIndex);
         schematicFile = p.getProperty("schematicFile", schematicFile);
         buildOriginPos = deserializePos(p.getProperty("buildOriginPos", ""));
@@ -171,6 +180,12 @@ public final class BuilderConfig {
         homePos = deserializePos(p.getProperty("homePos", ""));
         includeEnderChests = Boolean.parseBoolean(p.getProperty("includeEnderChests", Boolean.toString(includeEnderChests)));
         deserializeBoxes(p.getProperty("chestBoxes", ""));
+    }
+
+    private static WorkerEquip migrateLegacyEquip(Properties p) {
+        WorkerEquip eq = new WorkerEquip();
+        eq.add(p.getProperty("foodItem", "minecraft:baked_potato"), parseInt(p, "targetFood", 64));
+        return eq;
     }
 
     private static int parseInt(Properties p, String key, int fallback) {

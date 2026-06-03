@@ -7,8 +7,10 @@ import com.luna0wl.baritoneworker.worker.common.Baritones;
 import com.luna0wl.baritoneworker.worker.common.ChestRoute;
 import com.luna0wl.baritoneworker.worker.common.DebugLog;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
+import com.luna0wl.baritoneworker.worker.common.ItemCategories;
 import com.luna0wl.baritoneworker.worker.common.MenuActions;
 import com.luna0wl.baritoneworker.worker.common.Teleporter;
+import com.luna0wl.baritoneworker.worker.common.WorkerEquip;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.player.LocalPlayer;
@@ -38,6 +40,10 @@ public final class MinerWorker {
     private MinerState state = MinerState.IDLE;
     private int ticksInState;
     private IBaritone baritone;
+
+    private ChestRoute.Mode serviceMode = ChestRoute.Mode.DEPOSIT_WITHDRAW;
+    private String serviceCacheKey = "miner";
+    private java.util.List<int[]> serviceBoxes = java.util.List.of();
 
     private int tunnelIdleTicks;
 
@@ -88,13 +94,8 @@ public final class MinerWorker {
                 + "§a chests=§e" + config.chestBoxes.size() + " box(es)");
 
         Inventory inv = mc.player.getInventory();
-        int picks = ContainerService.countItem(inv, config.pickaxeItem);
-        int shovels = ContainerService.countItem(inv, config.shovelItem);
-        int food = ContainerService.countItem(inv, config.foodItem);
-        if (picks < config.targetPickaxes || shovels < config.targetShovels || food < config.targetFood) {
-            chat(mc, "Low on supplies (picks=" + picks + "/" + config.targetPickaxes
-                    + ", shovels=" + shovels + "/" + config.targetShovels
-                    + ", food=" + food + "/" + config.targetFood + ") — restocking first.");
+        if (!config.equip.fullyStocked(inv)) {
+            chat(mc, "Low on supplies (" + config.equip.serialize() + ") — restocking first.");
             setState(mc, MinerState.GO_TO_HOME);
         } else {
             setState(mc, MinerState.GO_TO_MINE);
@@ -127,6 +128,8 @@ public final class MinerWorker {
             return;
         }
 
+        if (Baritones.isUserPaused(baritone)) return;
+
         ticksInState++;
 
         switch (state) {
@@ -134,7 +137,8 @@ public final class MinerWorker {
             case TUNNELING -> tickTunneling(mc);
             case RESET_HOME -> tickResetHome(mc);
             case GO_TO_HOME -> tickGoToHome(mc);
-            case SERVICE_CHESTS -> tickServiceChests(mc);
+            case SERVICE_CHESTS, SERVICE_DEPOSIT, SERVICE_RESTOCK -> tickServiceChests(mc);
+            case GO_TO_RESTOCK -> tickGoToRestock(mc);
             default -> { }
         }
     }
@@ -167,15 +171,29 @@ public final class MinerWorker {
             case GO_TO_HOME -> {
                 if (alreadyAtBase(mc)) {
                     chat(mc, "Already at base — servicing chests without teleport.");
-                    setState(mc, MinerState.SERVICE_CHESTS);
+                    setState(mc, firstServiceState());
                 } else {
                     teleporter.begin(mc);
                     sendCommand(mc, "home " + config.baseHome);
                 }
             }
-            case SERVICE_CHESTS -> enterServiceChests(mc);
+            case SERVICE_CHESTS -> enterService(mc, config.depositArea(), ChestRoute.Mode.DEPOSIT_WITHDRAW, "miner");
+            case SERVICE_DEPOSIT -> enterService(mc, config.depositArea(), ChestRoute.Mode.DEPOSIT_ONLY, "miner");
+            case GO_TO_RESTOCK -> {
+                if (config.restockHome.isBlank()) {
+                    setState(mc, MinerState.SERVICE_RESTOCK);
+                } else {
+                    teleporter.begin(mc);
+                    sendCommand(mc, "home " + config.restockHome);
+                }
+            }
+            case SERVICE_RESTOCK -> enterService(mc, config.restockArea(), ChestRoute.Mode.WITHDRAW_ONLY, "miner-restock");
             default -> { }
         }
+    }
+
+    private MinerState firstServiceState() {
+        return config.hasRestock() ? MinerState.SERVICE_DEPOSIT : MinerState.SERVICE_CHESTS;
     }
 
     private boolean teleportArrived(Minecraft mc) {
@@ -242,13 +260,23 @@ public final class MinerWorker {
             config.homePos = posOf(mc);
             config.save();
             chat(mc, "At base — servicing chests.");
-            setState(mc, MinerState.SERVICE_CHESTS);
+            setState(mc, firstServiceState());
         }
     }
 
-    private void enterServiceChests(Minecraft mc) {
-        int found = chestRoute.begin(mc, config.chestBoxes, config.includeEnderChests,
-                config.clickDelayTicks, config.chestPathTimeoutTicks, false, serviceHandler);
+    private void tickGoToRestock(Minecraft mc) {
+        if (teleportArrived(mc)) {
+            chat(mc, "At the restock area — withdrawing supplies.");
+            setState(mc, MinerState.SERVICE_RESTOCK);
+        }
+    }
+
+    private void enterService(Minecraft mc, java.util.List<int[]> boxes, ChestRoute.Mode mode, String cacheKey) {
+        serviceMode = mode;
+        serviceCacheKey = cacheKey;
+        serviceBoxes = boxes;
+        int found = chestRoute.begin(mc, boxes, config.includeEnderChests,
+                config.clickDelayTicks, config.chestPathTimeoutTicks, false, mode, serviceHandler);
         if (found > 0) {
             chat(mc, "Found §e" + found + "§r chest(s) to service.");
         }
@@ -259,7 +287,7 @@ public final class MinerWorker {
             case FINISHED -> finishService(mc);
             case EMPTY -> {
                 chat(mc, "§cNo chests found in the selected area — stopping.");
-                chat(mc, "§7Area: " + ContainerService.describeArea(mc.level, config.chestBoxes, config.includeEnderChests));
+                chat(mc, "§7Area: " + ContainerService.describeArea(mc.level, serviceBoxes, config.includeEnderChests));
                 stop(mc);
             }
             case BLOCKED -> {
@@ -274,49 +302,48 @@ public final class MinerWorker {
         }
     }
 
-    private int nextSupplyWithdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
-        Inventory inv = mc.player.getInventory();
-        int needPick = config.targetPickaxes - ContainerService.countItem(inv, config.pickaxeItem);
-        int needShovel = config.targetShovels - ContainerService.countItem(inv, config.shovelItem);
-        int needFood = config.targetFood - ContainerService.countItem(inv, config.foodItem);
-        int slot = -1;
-        if (needPick > 0) slot = ContainerService.nextWithdrawSlot(menu, config.pickaxeItem);
-        if (slot == -1 && needShovel > 0) slot = ContainerService.nextWithdrawSlot(menu, config.shovelItem);
-        if (slot == -1 && needFood > 0) slot = ContainerService.nextWithdrawSlot(menu, config.foodItem);
-        return slot;
-    }
-
     private boolean moreWorkToDo(Minecraft mc) {
         Inventory inv = mc.player.getInventory();
-        if (config.targetPickaxes - ContainerService.countItem(inv, config.pickaxeItem) > 0) return true;
-        if (config.targetShovels - ContainerService.countItem(inv, config.shovelItem) > 0) return true;
-        if (config.targetFood - ContainerService.countItem(inv, config.foodItem) > 0) return true;
-        return ContainerService.hasDepositable(mc.player.inventoryMenu, config.keepItems);
+        boolean wantWithdraw = serviceMode != ChestRoute.Mode.DEPOSIT_ONLY && !config.equip.fullyStocked(inv);
+        boolean wantDeposit = serviceMode != ChestRoute.Mode.WITHDRAW_ONLY
+                && config.equip.hasDepositable(mc.player.inventoryMenu);
+        return wantWithdraw || wantDeposit;
     }
 
     private void finishService(Minecraft mc) {
+        if (state == MinerState.SERVICE_DEPOSIT) {
+            setState(mc, MinerState.GO_TO_RESTOCK);
+            return;
+        }
         Inventory inv = mc.player.getInventory();
-        int picks = ContainerService.countItem(inv, config.pickaxeItem);
-        int shovels = ContainerService.countItem(inv, config.shovelItem);
-        int food = ContainerService.countItem(inv, config.foodItem);
-        if (moreWorkToDo(mc)) {
-            chat(mc, "§eService incomplete (picks=" + picks + ", shovels=" + shovels + ", food=" + food
+        if (!config.equip.fullyStocked(inv)) {
+            chat(mc, "§eService incomplete (have " + heldSummary(inv)
                     + ") — chests may be full or out of supplies. Continuing anyway.");
         } else {
-            chat(mc, "Serviced chests (picks=" + picks + ", shovels=" + shovels + ", food=" + food + "). Back to mining.");
+            chat(mc, "Serviced chests (have " + heldSummary(inv) + "). Back to mining.");
         }
         setState(mc, MinerState.GO_TO_MINE);
+    }
+
+    private String heldSummary(Inventory inv) {
+        StringBuilder sb = new StringBuilder();
+        for (WorkerEquip.Entry e : config.equip.entries()) {
+            if (sb.length() > 0) sb.append(", ");
+            int have = ContainerService.countMatching(inv, e::matches);
+            sb.append(e.token()).append("=").append(have).append("/").append(e.count());
+        }
+        return sb.toString();
     }
 
     private final class ServiceHandler implements ChestRoute.Handler {
         @Override
         public int nextDepositSlot(Minecraft mc, AbstractContainerMenu menu) {
-            return ContainerService.nextDepositSlot(menu, config.keepItems);
+            return config.equip.nextDepositSlot(menu);
         }
 
         @Override
         public int nextWithdrawSlot(Minecraft mc, AbstractContainerMenu menu) {
-            return nextSupplyWithdrawSlot(mc, menu);
+            return config.equip.nextWithdrawSlot(menu, mc.player.getInventory());
         }
 
         @Override
@@ -331,7 +358,7 @@ public final class MinerWorker {
 
         @Override
         public String cacheKey() {
-            return "miner";
+            return serviceCacheKey;
         }
 
         @Override
@@ -520,21 +547,25 @@ public final class MinerWorker {
 
     private void selectPickaxe(Minecraft mc) {
         Inventory inv = mc.player.getInventory();
-        if (inv.getItem(inv.getSelectedSlot()).is(config.pickaxeItem)) return;
+        if (isPickaxe(inv.getItem(inv.getSelectedSlot()))) return;
         for (int i = 0; i < 9; i++) {
-            if (inv.getItem(i).is(config.pickaxeItem)) {
+            if (isPickaxe(inv.getItem(i))) {
                 inv.setSelectedSlot(i);
                 return;
             }
         }
         for (int i = 9; i < 36; i++) {
-            if (inv.getItem(i).is(config.pickaxeItem)) {
+            if (isPickaxe(inv.getItem(i))) {
                 mc.gameMode.handleContainerInput(mc.player.inventoryMenu.containerId, i, 8,
                         ContainerInput.SWAP, mc.player);
                 inv.setSelectedSlot(8);
                 return;
             }
         }
+    }
+
+    private boolean isPickaxe(net.minecraft.world.item.ItemStack s) {
+        return !s.isEmpty() && ItemCategories.matches("pickaxe", s.getItem());
     }
 
     private int[] posOf(Minecraft mc) {

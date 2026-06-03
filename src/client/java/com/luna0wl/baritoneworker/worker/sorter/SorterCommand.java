@@ -3,8 +3,7 @@ package com.luna0wl.baritoneworker.worker.sorter;
 import baritone.api.IBaritone;
 import baritone.api.command.Command;
 import baritone.api.command.argument.IArgConsumer;
-import baritone.api.selection.ISelection;
-import baritone.api.utils.BetterBlockPos;
+import com.luna0wl.baritoneworker.worker.common.AreaSelection;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
 import com.luna0wl.baritoneworker.worker.common.ItemCategories;
 import net.minecraft.core.BlockPos;
@@ -19,11 +18,12 @@ import java.util.stream.Stream;
 public final class SorterCommand extends Command {
 
     private static final List<String> SUBS = List.of(
-            "start", "stop", "status", "area", "home", "assign", "reload", "categories", "save");
+            "start", "stop", "status", "area", "corner1", "corner2", "home", "assign", "reload", "categories", "save");
 
     private final SorterWorker worker;
     private final SorterConfig config;
     private final SortScheme scheme;
+    private final AreaSelection areaSel = new AreaSelection();
 
     public SorterCommand(IBaritone baritone, SorterWorker worker, SorterConfig config, SortScheme scheme) {
         super(baritone, "sorter");
@@ -46,6 +46,8 @@ public final class SorterCommand extends Command {
                 case "status" -> printStatus();
                 case "save" -> { config.save(); logDirect("Settings saved."); }
                 case "area" -> doArea(args);
+                case "corner1" -> captureCorner(false);
+                case "corner2" -> captureCorner(true);
                 case "home" -> { config.home = args.getString(); config.save(); logDirect("home = " + config.home); }
                 case "assign" -> doAssign(args);
                 case "reload" -> { scheme.load(); logDirect("Sort scheme reloaded."); }
@@ -77,34 +79,42 @@ public final class SorterCommand extends Command {
         logDirect("Pinned §e" + String.join(", ", tags) + "§r to the chest at §e" + pos.toShortString() + "§r.");
     }
 
-    private void doArea(IArgConsumer args) {
-        if (args.hasAny() && args.getString().equalsIgnoreCase("clear")) {
-            config.clearArea();
-            config.save();
-            logDirect("Chest area cleared.");
+    private void captureCorner(boolean second) {
+        BlockPos feet = ctx.playerFeet();
+        if (second) areaSel.setCorner2(feet);
+        else areaSel.setCorner1(feet);
+        logDirect("§aChest corner " + (second ? "2" : "1") + " = §r"
+                + feet.getX() + "," + feet.getY() + "," + feet.getZ());
+        if (!areaSel.ready()) {
+            logDirect("§7Now stand on the opposite corner and run §e#sorter corner" + (second ? "1" : "2") + "§7.");
             return;
         }
-        ISelection[] sels = baritone.getSelectionManager().getSelections();
-        if (sels == null || sels.length == 0) {
-            logDirect("§cNo Baritone selection found. Make one with §e#sel 1§c / §e#sel 2§c first.");
-            return;
-        }
-        List<int[]> boxes = new ArrayList<>();
-        for (ISelection s : sels) {
-            BetterBlockPos mn = s.min();
-            BetterBlockPos mx = s.max();
-            boxes.add(new int[]{mn.x, mn.y, mn.z, mx.x, mx.y, mx.z});
-        }
+        List<int[]> boxes = areaSel.boxes();
         config.setArea(boxes);
         config.save();
         int chests = ContainerService.scanChests(ctx.world(), boxes, ctx.playerFeet()).size();
-        logDirect("Captured §e" + boxes.size() + "§r selection box(es) holding §e" + chests + "§r chest(s)/barrel(s).");
+        logDirect("Captured the chest area holding §e" + chests + "§r chest(s)/barrel(s).");
+        if (chests == 0) {
+            logDirect("§eNo chests detected yet — make sure the area is loaded and contains chests.");
+        }
+    }
+
+    private void doArea(IArgConsumer args) {
+        String op = args.hasAny() ? args.getString().toLowerCase(Locale.ROOT) : "status";
+        switch (op) {
+            case "clear" -> { config.clearArea(); areaSel.clear(); config.save(); logDirect("Chest area cleared."); }
+            case "corner1" -> captureCorner(false);
+            case "corner2" -> captureCorner(true);
+            case "status" -> logDirect("Chest area: §e" + config.chestBoxes.size() + "§r box(es) "
+                    + (config.hasArea() ? "" : "§c(not set)") + "  pending: " + areaSel.status());
+            default -> logDirect("Usage: §e#sorter area corner1|corner2|clear|status§r (or §e#sorter corner1/corner2§r).");
+        }
     }
 
     private void printStatus() {
         logDirect("§6BaritoneSorter§r — state: §e" + worker.getState());
         logDirect(" home=§e" + config.home + "§r  chestArea=§e" + config.chestBoxes.size() + "§r box(es)"
-                + (config.hasArea() ? "" : " §c(not set — run #sorter area)"));
+                + (config.hasArea() ? "" : " §c(not set — run #sorter corner1 / corner2)"));
         logDirect(" Tag chests with signs (a line per tag) or pin them in sortscheme.json / #sorter assign.");
         logDirect(" Tags = a category (" + String.join(", ", ItemCategories.names()) + "), a scheme group, or an item id.");
     }
@@ -132,14 +142,16 @@ public final class SorterCommand extends Command {
                 "",
                 "Setup:",
                 "- Set an Essentials home by your chest room (default 'Home').",
-                "- Select the room with #sel 1 / #sel 2, then run #sorter area.",
+                "- Stand on one corner of the room and run #sorter corner1, then the opposite",
+                "  corner and #sorter corner2.",
                 "- Tag chests: place a sign (one tag per line), or look at a chest and run",
                 "  #sorter assign <tag...>, or edit config/baritoneworker/sortscheme.json.",
                 "",
                 "Usage:",
                 "> sorter - show status",
                 "> sorter start / stop",
-                "> sorter area [clear] - capture the current selection as the chest area",
+                "> sorter corner1 / corner2 - capture the chest area by standing on its corners",
+                "> sorter area clear|status - manage the chest area",
                 "> sorter home <name> - the chest-room home (default Home)",
                 "> sorter assign <tag...> - pin tags onto the chest you're looking at",
                 "> sorter reload - reload sortscheme.json from disk",

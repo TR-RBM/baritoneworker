@@ -26,4 +26,13 @@ public final class Baritones {
         if (b == null) b = provider.getPrimaryBaritone();
         return b;
     }
+
+    public static final String PAUSE_PROCESS = "Pause/Resume Commands";
+
+    public static boolean isUserPaused(IBaritone b) {
+        if (b == null) return false;
+        return b.getPathingControlManager().mostRecentInControl()
+                .map(p -> PAUSE_PROCESS.equals(p.displayName0()))
+                .orElse(false);
+    }
 }

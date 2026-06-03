@@ -34,6 +34,8 @@ public final class ChestRoute {
 
     public enum Result { RUNNING, FINISHED, BLOCKED, EMPTY }
 
+    public enum Mode { DEPOSIT_WITHDRAW, DEPOSIT_ONLY, WITHDRAW_ONLY }
+
     private enum Step { PATH, OPEN, DEPOSIT, WITHDRAW, CLOSE }
 
     private static final int REACH_RETRIES = 2;
@@ -56,6 +58,7 @@ public final class ChestRoute {
     private boolean rescanForMore;
     private int clickDelayTicks;
     private int chestPathTimeoutTicks;
+    private Mode mode = Mode.DEPOSIT_WITHDRAW;
 
     private int index;
     private Step step = Step.PATH;
@@ -79,12 +82,20 @@ public final class ChestRoute {
 
     public int begin(Minecraft mc, List<int[]> boxes, boolean includeEnderChests,
                      int clickDelayTicks, int chestPathTimeoutTicks, boolean rescanForMore, Handler handler) {
+        return begin(mc, boxes, includeEnderChests, clickDelayTicks, chestPathTimeoutTicks,
+                rescanForMore, Mode.DEPOSIT_WITHDRAW, handler);
+    }
+
+    public int begin(Minecraft mc, List<int[]> boxes, boolean includeEnderChests,
+                     int clickDelayTicks, int chestPathTimeoutTicks, boolean rescanForMore,
+                     Mode mode, Handler handler) {
         this.handler = handler;
         this.boxes = boxes;
         this.includeEnderChests = includeEnderChests;
         this.rescanForMore = rescanForMore;
         this.clickDelayTicks = clickDelayTicks;
         this.chestPathTimeoutTicks = chestPathTimeoutTicks;
+        this.mode = mode;
         queue.clear();
         visited.clear();
         index = 0;
@@ -193,6 +204,10 @@ public final class ChestRoute {
     }
 
     private Result tickDeposit(Minecraft mc) {
+        if (mode == Mode.WITHDRAW_ONLY) {
+            setStep(Step.WITHDRAW);
+            return Result.RUNNING;
+        }
         if (clickCooldown > 0) return Result.RUNNING;
         AbstractContainerMenu menu = mc.player.containerMenu;
         if (!(menu instanceof ChestMenu)) { setStep(Step.CLOSE); return Result.RUNNING; }
@@ -210,6 +225,10 @@ public final class ChestRoute {
     }
 
     private Result tickWithdraw(Minecraft mc) {
+        if (mode == Mode.DEPOSIT_ONLY) {
+            setStep(Step.CLOSE);
+            return Result.RUNNING;
+        }
         if (clickCooldown > 0) return Result.RUNNING;
         AbstractContainerMenu menu = mc.player.containerMenu;
         if (!(menu instanceof ChestMenu)) { setStep(Step.CLOSE); return Result.RUNNING; }

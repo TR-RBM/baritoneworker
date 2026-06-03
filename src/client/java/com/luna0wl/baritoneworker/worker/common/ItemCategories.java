@@ -24,6 +24,11 @@ public final class ItemCategories {
         CATS.put("wool", tag(ItemTags.WOOL));
         CATS.put("food", ItemCategories::isFood);
         CATS.put("ores", ItemCategories::isOreLike);
+        CATS.put("pickaxe", pathEndsWith("_pickaxe"));
+        CATS.put("axe", pathEndsWith("_axe"));
+        CATS.put("shovel", pathEndsWith("_shovel"));
+        CATS.put("hoe", pathEndsWith("_hoe"));
+        CATS.put("sword", pathEndsWith("_sword"));
         CATS.put("tools", ItemCategories::isTool);
         CATS.put("weapons", ItemCategories::isWeapon);
         CATS.put("armor", ItemCategories::isArmor);

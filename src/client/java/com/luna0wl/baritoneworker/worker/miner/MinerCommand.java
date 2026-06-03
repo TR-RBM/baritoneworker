@@ -3,15 +3,15 @@ package com.luna0wl.baritoneworker.worker.miner;
 import baritone.api.IBaritone;
 import baritone.api.command.Command;
 import baritone.api.command.argument.IArgConsumer;
-import baritone.api.selection.ISelection;
 import baritone.api.utils.BetterBlockPos;
+import com.luna0wl.baritoneworker.worker.common.AreaSelection;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
 import com.luna0wl.baritoneworker.worker.common.DebugLog;
-import com.luna0wl.baritoneworker.worker.common.ItemNames;
+import com.luna0wl.baritoneworker.worker.common.ItemCategories;
+import com.luna0wl.baritoneworker.worker.common.WorkerEquip;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.Container;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -24,13 +24,13 @@ import java.util.stream.Stream;
 public final class MinerCommand extends Command {
 
     private static final List<String> SUBS = List.of(
-            "start", "stop", "status", "area", "pickaxe", "pickaxes", "shovel", "shovels", "food",
+            "start", "stop", "status", "area", "corner1", "corner2", "restock", "keep",
             "freeslots", "mine", "home", "ore", "ender", "save", "debug");
-
-    private enum Supply { PICKAXE, SHOVEL, FOOD }
 
     private final MinerWorker worker;
     private final MinerConfig config;
+    private final AreaSelection areaSel = new AreaSelection();
+    private final AreaSelection restockSel = new AreaSelection();
 
     public MinerCommand(IBaritone baritone, MinerWorker worker, MinerConfig config) {
         super(baritone, "miner");
@@ -52,9 +52,10 @@ public final class MinerCommand extends Command {
                 case "status" -> printStatus();
                 case "save" -> { config.save(); logDirect("Settings saved."); }
                 case "area" -> doArea(args);
-                case "pickaxes", "pickaxe" -> doSupply(args, Supply.PICKAXE);
-                case "shovels", "shovel" -> doSupply(args, Supply.SHOVEL);
-                case "food" -> doSupply(args, Supply.FOOD);
+                case "corner1" -> captureCorner(areaSel, false, false);
+                case "corner2" -> captureCorner(areaSel, true, false);
+                case "restock" -> doRestock(args);
+                case "keep" -> doKeep(args);
                 case "freeslots" -> { config.stopAtFreeSlots = nextInt(args, config.stopAtFreeSlots); config.save(); logDirect("stopAtFreeSlots = " + config.stopAtFreeSlots); }
                 case "mine" -> { config.mineHome = args.getString(); config.save(); logDirect("mineHome = " + config.mineHome); }
                 case "home" -> { config.baseHome = args.getString(); config.save(); logDirect("baseHome = " + config.baseHome); }
@@ -68,83 +69,109 @@ public final class MinerCommand extends Command {
         }
     }
 
-    private void doSupply(IArgConsumer args, Supply kind) {
-        String label = switch (kind) {
-            case PICKAXE -> "pickaxe";
-            case SHOVEL -> "shovel";
-            case FOOD -> "food";
-        };
-        Item current = switch (kind) {
-            case PICKAXE -> config.pickaxeItem;
-            case SHOVEL -> config.shovelItem;
-            case FOOD -> config.foodItem;
-        };
-        int target = switch (kind) {
-            case PICKAXE -> config.targetPickaxes;
-            case SHOVEL -> config.targetShovels;
-            case FOOD -> config.targetFood;
-        };
-        if (!args.hasAny()) {
-            logDirect(label + ": item=§e" + ItemNames.idOf(current) + "§r keep=§e" + target);
+    private void doKeep(IArgConsumer args) {
+        if (!args.hasAny()) { printKeep(); return; }
+        String op = args.getString().toLowerCase(Locale.ROOT);
+        switch (op) {
+            case "list" -> printKeep();
+            case "clear" -> { config.equip.clear(); config.save(); logDirect("Keep list cleared."); }
+            case "add", "set" -> {
+                if (!args.hasAny()) { logDirect("Usage: §e#miner keep add <item|category> <count>"); return; }
+                String token = args.getString().trim();
+                int count = nextInt(args, 1);
+                if (!config.equip.add(token, count)) {
+                    logDirect("§cUnknown item/category '" + token + "'. Use a registry id (e.g. §enetherite_pickaxe§c) "
+                            + "or a category (§e" + String.join(", ", ItemCategories.names()) + "§c).");
+                    return;
+                }
+                config.save();
+                logDirect("keep §e" + token + "§r ×" + count);
+            }
+            case "remove" -> {
+                if (!args.hasAny()) { logDirect("Usage: §e#miner keep remove <item|category>"); return; }
+                String token = args.getString().trim();
+                boolean removed = config.equip.remove(token);
+                config.save();
+                logDirect(removed ? "Removed §e" + token + "§r from the keep list." : "§cNot in keep list: " + token);
+            }
+            default -> logDirect("Usage: §e#miner keep add|remove|set|clear|list <item|category> <count>");
+        }
+    }
+
+    private void printKeep() {
+        logDirect("§9Keep list§r (kept on deposit, topped up on restock):");
+        if (config.equip.isEmpty()) {
+            logDirect("  §7(empty)");
             return;
         }
-        String s = args.getString().trim();
-        try {
-            int n = Math.max(0, Integer.parseInt(s));
-            switch (kind) {
-                case PICKAXE -> config.targetPickaxes = n;
-                case SHOVEL -> config.targetShovels = n;
-                case FOOD -> config.targetFood = n;
-            }
-            config.save();
-            logDirect("keep " + label + " count = §e" + n);
-        } catch (NumberFormatException e) {
-            Item it = ItemNames.byId(s);
-            if (it == null) {
-                String example = switch (kind) {
-                    case PICKAXE -> "netherite_pickaxe";
-                    case SHOVEL -> "netherite_shovel";
-                    case FOOD -> "cooked_beef";
-                };
-                logDirect("§cUnknown item '" + s + "'. Give a registry id (e.g. §e"
-                        + example + "§c) or a number.");
-                return;
-            }
-            switch (kind) {
-                case PICKAXE -> config.setPickaxeItem(it);
-                case SHOVEL -> config.setShovelItem(it);
-                case FOOD -> config.setFoodItem(it);
-            }
-            config.save();
-            logDirect(label + " item = §e" + ItemNames.idOf(it));
+        for (WorkerEquip.Entry e : config.equip.entries()) {
+            logDirect("  §e" + e.token() + "§r ×" + e.count() + (e.isCategory() ? " §7(category)" : ""));
+        }
+    }
+
+    private void captureCorner(AreaSelection sel, boolean second, boolean restock) {
+        BlockPos feet = ctx.playerFeet();
+        String name = restock ? "Restock" : "Chest";
+        if (second) sel.setCorner2(feet);
+        else sel.setCorner1(feet);
+        logDirect("§a" + name + " corner " + (second ? "2" : "1") + " = §r"
+                + feet.getX() + "," + feet.getY() + "," + feet.getZ());
+        if (!sel.ready()) {
+            logDirect("§7Now stand on the opposite corner and run §e#miner "
+                    + (restock ? "restock " : "") + "corner" + (second ? "1" : "2") + "§7.");
+            return;
+        }
+        List<int[]> boxes = sel.boxes();
+        if (restock) config.setRestock(boxes); else config.setArea(boxes);
+        config.save();
+        int chests = ContainerService.scanChests(ctx.world(), boxes, ctx.playerFeet(), config.includeEnderChests).size();
+        logDirect("Captured the " + name.toLowerCase(Locale.ROOT) + " area holding §e" + chests + "§r chest(s)/barrel(s).");
+        logDirect("Area: " + ContainerService.describeArea(ctx.world(), boxes, config.includeEnderChests));
+        if (chests == 0) {
+            logDirect("§eNo chests detected yet — make sure the area is loaded and contains chests.");
         }
     }
 
     private void doArea(IArgConsumer args) {
-        if (args.hasAny() && args.getString().equalsIgnoreCase("clear")) {
-            config.clearArea();
-            config.save();
-            logDirect("Chest area cleared.");
-            return;
+        String op = args.hasAny() ? args.getString().toLowerCase(Locale.ROOT) : "status";
+        switch (op) {
+            case "clear" -> { config.clearArea(); areaSel.clear(); config.save(); logDirect("Chest area cleared."); }
+            case "corner1" -> captureCorner(areaSel, false, false);
+            case "corner2" -> captureCorner(areaSel, true, false);
+            case "status" -> {
+                logDirect("Chest area: §e" + config.chestBoxes.size() + "§r box(es) "
+                        + (config.hasArea() ? "" : "§c(not set)") + "  pending: " + areaSel.status());
+                if (config.hasArea()) {
+                    logDirect("Area: " + ContainerService.describeArea(ctx.world(), config.chestBoxes, config.includeEnderChests));
+                }
+            }
+            default -> logDirect("Usage: §e#miner area corner1|corner2|clear|status§r (or §e#miner corner1/corner2§r).");
         }
-        ISelection[] sels = baritone.getSelectionManager().getSelections();
-        if (sels == null || sels.length == 0) {
-            logDirect("§cNo Baritone selection found. Make one with §e#sel 1§c / §e#sel 2§c first.");
-            return;
-        }
-        List<int[]> boxes = new ArrayList<>();
-        for (ISelection s : sels) {
-            BetterBlockPos mn = s.min();
-            BetterBlockPos mx = s.max();
-            boxes.add(new int[]{mn.x, mn.y, mn.z, mx.x, mx.y, mx.z});
-        }
-        config.setArea(boxes);
-        config.save();
-        int chests = ContainerService.scanChests(ctx.world(), boxes, ctx.playerFeet()).size();
-        logDirect("Captured §e" + boxes.size() + "§r selection box(es) holding §e" + chests + "§r chest(s)/barrel(s).");
-        logDirect("Area: " + ContainerService.describeArea(ctx.world(), boxes, config.includeEnderChests));
-        if (chests == 0) {
-            logDirect("§eNo chests detected in the selection yet — make sure the area is loaded and actually contains chests.");
+    }
+
+    private void doRestock(IArgConsumer args) {
+        String op = args.hasAny() ? args.getString().toLowerCase(Locale.ROOT) : "status";
+        switch (op) {
+            case "clear" -> { config.clearRestock(); restockSel.clear(); config.save(); logDirect("Restock area cleared — restocking falls back to the chest area."); }
+            case "corner1" -> captureCorner(restockSel, false, true);
+            case "corner2" -> captureCorner(restockSel, true, true);
+            case "home" -> {
+                if (!args.hasAny()) { logDirect("restockHome = §e" + (config.restockHome.isBlank() ? "(shares base home)" : config.restockHome)); return; }
+                String h = args.getString().trim();
+                config.restockHome = h.equalsIgnoreCase("clear") ? "" : h;
+                config.save();
+                logDirect("restockHome = §e" + (config.restockHome.isBlank() ? "(shares base home)" : config.restockHome));
+            }
+            case "status" -> {
+                logDirect("Restock area: §e" + config.restockBoxes.size() + "§r box(es) "
+                        + (config.hasRestock() ? "" : "§7(unset — uses the chest area)")
+                        + "  restockHome=§e" + (config.restockHome.isBlank() ? "(base)" : config.restockHome)
+                        + "  pending: " + restockSel.status());
+                if (config.hasRestock()) {
+                    logDirect("Area: " + ContainerService.describeArea(ctx.world(), config.restockBoxes, config.includeEnderChests));
+                }
+            }
+            default -> logDirect("Usage: §e#miner restock corner1|corner2|clear|status|home <name>");
         }
     }
 
@@ -364,13 +391,13 @@ public final class MinerCommand extends Command {
 
     private void printStatus() {
         logDirect("§9BaritoneWorker§r — state: §e" + worker.getState());
-        logDirect(" mineHome=§e" + config.mineHome + "§r baseHome=§e" + config.baseHome);
-        logDirect(" pickaxe=§e" + ItemNames.idOf(config.pickaxeItem) + "§r×" + config.targetPickaxes
-                + "§r  shovel=§e" + ItemNames.idOf(config.shovelItem) + "§r×" + config.targetShovels
-                + "§r  food=§e" + ItemNames.idOf(config.foodItem) + "§r×" + config.targetFood
-                + "§r  stopAtFreeSlots=§e" + config.stopAtFreeSlots);
+        logDirect(" mineHome=§e" + config.mineHome + "§r baseHome=§e" + config.baseHome
+                + "§r stopAtFreeSlots=§e" + config.stopAtFreeSlots);
+        logDirect(" keep=§e" + (config.equip.isEmpty() ? "(empty)" : config.equip.serialize()));
         logDirect(" chestArea=§e" + config.chestBoxes.size() + "§r box(es)"
-                + (config.hasArea() ? "" : " §c(not set — run #miner area)"));
+                + (config.hasArea() ? "" : " §c(not set — run #miner corner1 / corner2)")
+                + "§r restockArea=§e" + config.restockBoxes.size() + "§r box(es)"
+                + (config.hasRestock() ? "" : " §7(uses chest area)"));
         logDirect(" exposedOreMining=" + (config.mineExposedOres ? "§aON" : "§cOFF") + "§r (#miner ore)"
                 + "§r enderChests=" + (config.includeEnderChests ? "§aon" : "§coff"));
     }
@@ -397,18 +424,19 @@ public final class MinerCommand extends Command {
                 "Setup:",
                 "- Set Essentials homes 'mine' (at the tunnel face, looking down the tunnel)",
                 "  and 'Home' (by your storage room).",
-                "- Select your chest room with #sel 1 / #sel 2, then run #miner area.",
+                "- Stand on one corner of your chest room and run #miner corner1, then the",
+                "  opposite corner and #miner corner2.",
                 "",
                 "Usage:",
                 "> miner - show status",
                 "> miner start / stop",
-                "> miner area [clear] - capture the current selection as the chest area",
-                "> miner pickaxe <n> - how many pickaxes to keep stocked (default 2)",
-                "> miner pickaxe <item> - which pickaxe (e.g. netherite_pickaxe)",
-                "> miner shovel <n> - how many shovels to keep stocked (default 1; 0 disables)",
-                "> miner shovel <item> - which shovel (e.g. netherite_shovel)",
-                "> miner food <n> - how much food to keep stocked (default 64)",
-                "> miner food <item> - which food (e.g. cooked_beef)",
+                "> miner corner1 / corner2 - capture the chest (deposit) area by standing on its corners",
+                "> miner area clear|status - manage the chest area",
+                "> miner restock corner1|corner2|clear|status - a separate supply area to restock from",
+                "> miner restock home <name|clear> - teleport to this home before restocking (default: base)",
+                "> miner keep add <item|category> <count> - keep/restock e.g. 'keep add pickaxe 2',",
+                "    'keep add stone_pickaxe 1', 'keep add diamond_pickaxe 1', 'keep add sword 1'",
+                "> miner keep remove <item|category> / keep clear / keep list",
                 "> miner freeslots <n> - return to base at this many free slots (default 1)",
                 "> miner mine <name> / miner home <name> - home names",
                 "> miner ender on|off - also service ender chests in the area (default off)",

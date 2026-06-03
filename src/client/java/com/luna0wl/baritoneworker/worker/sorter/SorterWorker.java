@@ -107,6 +107,8 @@ public final class SorterWorker {
             return;
         }
 
+        if (Baritones.isUserPaused(baritone)) return;
+
         ticksInState++;
         if (clickCooldown > 0) clickCooldown--;
 
