@@ -629,6 +629,11 @@ public final class LumberWorker {
         public void chat(String msg) {
             LumberWorker.this.chat(Minecraft.getInstance(), msg);
         }
+
+        @Override
+        public String cacheKey() {
+            return "lumber";
+        }
     }
 
     private void sendCommand(Minecraft mc, String command) {

@@ -663,6 +663,11 @@ public final class BuilderWorker {
         public void chat(String msg) {
             BuilderWorker.this.chat(Minecraft.getInstance(), msg);
         }
+
+        @Override
+        public String cacheKey() {
+            return "builder";
+        }
     }
 
     private void sendCommand(Minecraft mc, String command) {

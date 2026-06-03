@@ -65,9 +65,71 @@ public final class ContainerService {
         return finish(out, origin);
     }
 
+    public static String describeArea(Level level, List<int[]> boxes, boolean includeEnderChests) {
+        boolean loaded = boxesLoaded(level, boxes);
+        int chests = 0, rightHalves = 0, barrels = 0, enders = 0;
+        long total = 0, loadedBlocks = 0;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int[] b : boxes) {
+            for (int x = b[0]; x <= b[3]; x++) {
+                for (int y = b[1]; y <= b[4]; y++) {
+                    for (int z = b[2]; z <= b[5]; z++) {
+                        total++;
+                        cursor.set(x, y, z);
+                        if (!level.isLoaded(cursor)) continue;
+                        loadedBlocks++;
+                        BlockState state = level.getBlockState(cursor);
+                        if (state.getBlock() instanceof BarrelBlock) {
+                            barrels++;
+                        } else if (state.getBlock() instanceof EnderChestBlock) {
+                            enders++;
+                        } else if (state.getBlock() instanceof ChestBlock) {
+                            if (state.hasProperty(BlockStateProperties.CHEST_TYPE)
+                                    && state.getValue(BlockStateProperties.CHEST_TYPE) == ChestType.RIGHT) {
+                                rightHalves++;
+                            } else {
+                                chests++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("loaded=").append(loaded ? "yes" : "§cNO§r");
+        sb.append(", blocksLoaded=").append(loadedBlocks).append("/").append(total);
+        sb.append(", chests=").append(chests);
+        sb.append(", barrels=").append(barrels);
+        sb.append(", enderChests=").append(enders).append(includeEnderChests ? "(serviced)" : "(ignored)");
+        if (rightHalves > 0) {
+            sb.append(" §e[").append(rightHalves)
+                    .append(" double-chest right-half(s) skipped — your selection is one block off the left half]");
+        }
+        return sb.toString();
+    }
+
+    public static boolean boxesLoaded(Level level, List<int[]> boxes) {
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int[] b : boxes) {
+            int minCx = b[0] >> 4, maxCx = b[3] >> 4;
+            int minCz = b[2] >> 4, maxCz = b[5] >> 4;
+            for (int cx = minCx; cx <= maxCx; cx++) {
+                for (int cz = minCz; cz <= maxCz; cz++) {
+                    cursor.set((cx << 4), b[1], (cz << 4));
+                    if (!level.isLoaded(cursor)) return false;
+                }
+            }
+        }
+        return true;
+    }
+
     private static List<BlockPos> finish(List<BlockPos> out, BlockPos origin) {
         out.sort(Comparator.comparingDouble(p -> p.distSqr(origin)));
         return out;
+    }
+
+    public static boolean isStorageAt(Level level, BlockPos pos, boolean includeEnderChests) {
+        return isStorage(level, pos, includeEnderChests);
     }
 
     private static boolean isStorage(Level level, BlockPos pos, boolean includeEnderChests) {

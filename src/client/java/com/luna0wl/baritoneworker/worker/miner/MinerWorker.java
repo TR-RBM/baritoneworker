@@ -5,6 +5,7 @@ import baritone.api.pathing.goals.GoalGetToBlock;
 import baritone.api.utils.RotationUtils;
 import com.luna0wl.baritoneworker.worker.common.Baritones;
 import com.luna0wl.baritoneworker.worker.common.ChestRoute;
+import com.luna0wl.baritoneworker.worker.common.DebugLog;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
 import com.luna0wl.baritoneworker.worker.common.MenuActions;
 import com.luna0wl.baritoneworker.worker.common.Teleporter;
@@ -258,6 +259,7 @@ public final class MinerWorker {
             case FINISHED -> finishService(mc);
             case EMPTY -> {
                 chat(mc, "§cNo chests found in the selected area — stopping.");
+                chat(mc, "§7Area: " + ContainerService.describeArea(mc.level, config.chestBoxes, config.includeEnderChests));
                 stop(mc);
             }
             case BLOCKED -> {
@@ -325,6 +327,17 @@ public final class MinerWorker {
         @Override
         public void chat(String msg) {
             MinerWorker.this.chat(Minecraft.getInstance(), msg);
+        }
+
+        @Override
+        public String cacheKey() {
+            return "miner";
+        }
+
+        @Override
+        public void debug(String msg) {
+            DebugLog.log("miner", msg);
+            if (config.debug) MinerWorker.this.chat(Minecraft.getInstance(), "§8[dbg] " + msg);
         }
     }
 

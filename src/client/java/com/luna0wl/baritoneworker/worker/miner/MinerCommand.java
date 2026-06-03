@@ -6,8 +6,15 @@ import baritone.api.command.argument.IArgConsumer;
 import baritone.api.selection.ISelection;
 import baritone.api.utils.BetterBlockPos;
 import com.luna0wl.baritoneworker.worker.common.ContainerService;
+import com.luna0wl.baritoneworker.worker.common.DebugLog;
 import com.luna0wl.baritoneworker.worker.common.ItemNames;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.Container;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,7 +25,7 @@ public final class MinerCommand extends Command {
 
     private static final List<String> SUBS = List.of(
             "start", "stop", "status", "area", "pickaxe", "pickaxes", "shovel", "shovels", "food",
-            "freeslots", "mine", "home", "ore", "ender", "save");
+            "freeslots", "mine", "home", "ore", "ender", "save", "debug");
 
     private enum Supply { PICKAXE, SHOVEL, FOOD }
 
@@ -53,6 +60,7 @@ public final class MinerCommand extends Command {
                 case "home" -> { config.baseHome = args.getString(); config.save(); logDirect("baseHome = " + config.baseHome); }
                 case "ore" -> doOre(args);
                 case "ender" -> doEnder(args);
+                case "debug" -> doDebug(args);
                 default -> logDirect("Unknown subcommand '" + sub + "'. Try: " + String.join(", ", SUBS));
             }
         } catch (Exception e) {
@@ -134,9 +142,128 @@ public final class MinerCommand extends Command {
         config.save();
         int chests = ContainerService.scanChests(ctx.world(), boxes, ctx.playerFeet()).size();
         logDirect("Captured §e" + boxes.size() + "§r selection box(es) holding §e" + chests + "§r chest(s)/barrel(s).");
+        logDirect("Area: " + ContainerService.describeArea(ctx.world(), boxes, config.includeEnderChests));
         if (chests == 0) {
             logDirect("§eNo chests detected in the selection yet — make sure the area is loaded and actually contains chests.");
         }
+    }
+
+    private void doDebug(IArgConsumer args) {
+        if (args.hasAny()) {
+            String v = args.getString().toLowerCase(Locale.ROOT);
+            if (v.equals("scan")) {
+                doDebugScan(args);
+                return;
+            }
+            if (v.equals("dump")) {
+                doDebugDump(args);
+                return;
+            }
+            config.debug = v.equals("on") || v.equals("true") || v.equals("1");
+            config.save();
+            DebugLog.setEnabled(config.debug);
+            if (config.debug) DebugLog.reset();
+            logDirect("Miner debug logging: " + (config.debug ? "§aON" : "§cOFF")
+                    + " §7(file: config/baritoneworker/debug.log)");
+            if (config.debug) logDirect("§7Now run a service cycle — state is written to the log file.");
+            return;
+        }
+        logDirect("§6=== miner debug snapshot ===");
+        BetterBlockPos p = ctx.playerFeet();
+        logDirect("player=" + p.x + "," + p.y + "," + p.z
+                + "  baseHome=" + config.baseHome
+                + "  homePos=" + (config.homePos == null ? "unset"
+                        : config.homePos[0] + "," + config.homePos[1] + "," + config.homePos[2]));
+        if (!config.hasArea()) {
+            logDirect("§cNo chest area set — run #miner area.");
+            return;
+        }
+        for (int[] b : config.chestBoxes) {
+            int cx = (b[0] + b[3]) / 2, cy = (b[1] + b[4]) / 2, cz = (b[2] + b[5]) / 2;
+            double dist = Math.sqrt(Math.pow(p.x - cx, 2) + Math.pow(p.y - cy, 2) + Math.pow(p.z - cz, 2));
+            logDirect("box=[" + b[0] + "," + b[1] + "," + b[2] + " .. " + b[3] + "," + b[4] + "," + b[5]
+                    + "] center=" + cx + "," + cy + "," + cz
+                    + " dist=" + String.format(Locale.ROOT, "%.1f", dist));
+        }
+        logDirect("Area: " + ContainerService.describeArea(ctx.world(), config.chestBoxes, config.includeEnderChests));
+        logDirect("baritone: pathing=" + baritone.getPathingBehavior().isPathing());
+        BetterBlockPos pp = ctx.playerFeet();
+        DebugLog.write("snapshot", "player=" + pp.x + "," + pp.y + "," + pp.z
+                + " homePos=" + (config.homePos == null ? "unset"
+                        : config.homePos[0] + "," + config.homePos[1] + "," + config.homePos[2])
+                + " boxes=" + config.chestBoxes.size()
+                + " area={" + ContainerService.describeArea(ctx.world(), config.chestBoxes, config.includeEnderChests) + "}");
+    }
+
+    private void doDebugDump(IArgConsumer args) {
+        int r = args.hasAny() ? Math.max(1, Math.min(48, nextInt(args, 16))) : 16;
+        BetterBlockPos p = ctx.playerFeet();
+        Level w = ctx.world();
+        DebugLog.write("dump", "=== dump r=" + r + " around " + p.x + "," + p.y + "," + p.z + " ===");
+        int scanned = 0, unloaded = 0, containers = 0, serviceable = 0;
+        java.util.TreeMap<String, Integer> byType = new java.util.TreeMap<>();
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int x = p.x - r; x <= p.x + r; x++) {
+            for (int y = p.y - r; y <= p.y + r; y++) {
+                for (int z = p.z - r; z <= p.z + r; z++) {
+                    cursor.set(x, y, z);
+                    if (!w.isLoaded(cursor)) { unloaded++; continue; }
+                    scanned++;
+                    BlockState st = w.getBlockState(cursor);
+                    if (st.isAir()) continue;
+                    BlockEntity be = w.getBlockEntity(cursor);
+                    boolean isContainer = be instanceof Container
+                            || ContainerService.isStorageAt(w, cursor, true);
+                    if (!isContainer) continue;
+                    containers++;
+                    boolean svc = ContainerService.isStorageAt(w, cursor, config.includeEnderChests);
+                    if (svc) serviceable++;
+                    String id = BuiltInRegistries.BLOCK.getKey(st.getBlock()).toString();
+                    byType.merge(id + (svc ? "" : " §c[not serviced]"), 1, Integer::sum);
+                    DebugLog.write("dump", "  " + x + "," + y + "," + z + "  " + id
+                            + "  serviceable=" + svc);
+                }
+            }
+        }
+        DebugLog.write("dump", "scanned=" + scanned + " unloaded=" + unloaded
+                + " containers=" + containers + " serviceable=" + serviceable);
+        for (java.util.Map.Entry<String, Integer> e : byType.entrySet()) {
+            DebugLog.write("dump", "  type " + e.getKey() + " x" + e.getValue());
+        }
+        logDirect("§aDump complete: §e" + containers + "§r container(s) (§e" + serviceable
+                + "§r serviceable) within " + r + " blocks → written to config/baritoneworker/debug.log");
+        if (containers > serviceable) {
+            logDirect("§e" + (containers - serviceable) + " container(s) are NOT serviced by the miner "
+                    + "(only chests/barrels are). See the log for their types.");
+        }
+    }
+
+    private void doDebugScan(IArgConsumer args) {
+        int r = args.hasAny() ? Math.max(1, Math.min(64, nextInt(args, 32))) : 32;
+        BetterBlockPos p = ctx.playerFeet();
+        List<int[]> box = new ArrayList<>();
+        box.add(new int[]{p.x - r, p.y - r, p.z - r, p.x + r, p.y + r, p.z + r});
+        List<BlockPos> found = ContainerService.scanChests(ctx.world(), box, p, config.includeEnderChests);
+        logDirect("§6Scan r=" + r + " around " + p.x + "," + p.y + "," + p.z + ": §e" + found.size()
+                + "§r chest(s)/barrel(s) in loaded chunks.");
+        if (found.isEmpty()) {
+            logDirect("§eNothing nearby — move closer to your chests and try again, or raise the radius (#miner debug scan 64).");
+            return;
+        }
+        int minx = found.get(0).getX(), miny = found.get(0).getY(), minz = found.get(0).getZ();
+        int maxx = minx, maxy = miny, maxz = minz;
+        for (BlockPos b : found) {
+            minx = Math.min(minx, b.getX()); maxx = Math.max(maxx, b.getX());
+            miny = Math.min(miny, b.getY()); maxy = Math.max(maxy, b.getY());
+            minz = Math.min(minz, b.getZ()); maxz = Math.max(maxz, b.getZ());
+        }
+        logDirect("§aSelect this box: §f" + minx + "," + miny + "," + minz + "  ..  " + maxx + "," + maxy + "," + maxz);
+        int show = Math.min(8, found.size());
+        for (int i = 0; i < show; i++) {
+            BlockPos b = found.get(i);
+            logDirect("  " + b.getX() + "," + b.getY() + "," + b.getZ());
+        }
+        if (found.size() > show) logDirect("  ... and " + (found.size() - show) + " more");
     }
 
     private void doOre(IArgConsumer args) {

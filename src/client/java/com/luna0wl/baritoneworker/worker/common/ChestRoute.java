@@ -26,6 +26,10 @@ public final class ChestRoute {
         boolean moreWorkToDo(Minecraft mc);
 
         void chat(String msg);
+
+        default String cacheKey() { return null; }
+
+        default void debug(String msg) {}
     }
 
     public enum Result { RUNNING, FINISHED, BLOCKED, EMPTY }
@@ -36,7 +40,12 @@ public final class ChestRoute {
     private static final int OPEN_TIMEOUT_TICKS = 100;
     private static final int RESCAN_LIMIT = 6;
     private static final int RESCAN_SETTLE_TICKS = 20;
-    private static final int CHUNK_LOAD_RETRIES = 6;
+    private static final int CHUNK_LOAD_TIMEOUT_TICKS = 400;
+    private static final int PATH_TO_AREA_TIMEOUT_TICKS = 1200;
+    private static final double ARRIVAL_DIST = 5.0;
+    private static final int NEAR_AREA_GIVEUP_TICKS = 100;
+    private static final double GHOST_CHECK_DIST = 4.0;
+    private static final int STALL_LIMIT = 2;
 
     private final List<BlockPos> queue = new ArrayList<>();
     private final Set<BlockPos> visited = new HashSet<>();
@@ -53,9 +62,18 @@ public final class ChestRoute {
     private int ticksInStep;
     private int clickCooldown;
     private int actionClicks;
+    private int lastActionSlot = -1;
+    private int lastActionCount = -1;
+    private int actionStalls;
     private int rescans;
     private int reachRetries;
+    private int initialWaitTicks;
+    private int nearTicks;
     private BlockPos blockedChest;
+
+    private ChestCache cache;
+    private boolean seededFromCache;
+    private boolean reconciled;
 
     private Boolean savedAllowBreak;
 
@@ -76,9 +94,27 @@ public final class ChestRoute {
         actionClicks = 0;
         rescans = 0;
         reachRetries = 0;
+        initialWaitTicks = 0;
+        nearTicks = 0;
         blockedChest = null;
+        seededFromCache = false;
+        reconciled = false;
+        cache = handler.cacheKey() == null ? null : new ChestCache(handler.cacheKey());
         forceNoBreak();
-        queue.addAll(ContainerService.scanChests(mc.level, boxes, mc.player.blockPosition(), includeEnderChests));
+        List<BlockPos> live = ContainerService.scanChests(mc.level, boxes, mc.player.blockPosition(), includeEnderChests);
+        if (!live.isEmpty()) {
+            queue.addAll(live);
+            saveCache(live);
+        } else if (cache != null) {
+            for (BlockPos p : cache.load()) {
+                if (inBoxes(p) && !queue.contains(p)) queue.add(p);
+            }
+            seededFromCache = !queue.isEmpty();
+        }
+        handler.debug("begin: player=" + mc.player.blockPosition().toShortString()
+                + " boxes=" + boxes.size() + " liveScan=" + live.size()
+                + " seededFromCache=" + seededFromCache + " queue=" + queue.size()
+                + " loaded=" + ContainerService.boxesLoaded(mc.level, boxes));
         return queue.size();
     }
 
@@ -118,6 +154,13 @@ public final class ChestRoute {
     }
 
     private Result tickPath(Minecraft mc, IBaritone baritone, BlockPos chest) {
+        reconcile(mc);
+        if (seededFromCache && nearBlock(mc, chest, GHOST_CHECK_DIST)
+                && !ContainerService.isStorageAt(mc.level, chest, includeEnderChests)) {
+            cancelBaritone(baritone);
+            nextChest();
+            return Result.RUNNING;
+        }
         if (ticksInStep == 1) {
             baritone.getCustomGoalProcess().setGoalAndPath(new GoalGetToBlock(chest));
         }
@@ -155,7 +198,7 @@ public final class ChestRoute {
         if (!(menu instanceof ChestMenu)) { setStep(Step.CLOSE); return Result.RUNNING; }
         int bound = ContainerService.containerSlotCount(menu) + 40;
         int slot = handler.nextDepositSlot(mc, menu);
-        if (slot == -1 || actionClicks > bound) {
+        if (slot == -1 || actionClicks > bound || stalled(menu, slot)) {
             actionClicks = 0;
             setStep(Step.WITHDRAW);
             return Result.RUNNING;
@@ -172,7 +215,7 @@ public final class ChestRoute {
         if (!(menu instanceof ChestMenu)) { setStep(Step.CLOSE); return Result.RUNNING; }
         int bound = ContainerService.containerSlotCount(menu) + 40;
         int slot = handler.nextWithdrawSlot(mc, menu);
-        if (slot == -1 || actionClicks > bound) {
+        if (slot == -1 || actionClicks > bound || stalled(menu, slot)) {
             actionClicks = 0;
             setStep(Step.CLOSE);
             return Result.RUNNING;
@@ -196,7 +239,7 @@ public final class ChestRoute {
 
     private Result atQueueEnd(Minecraft mc, IBaritone baritone) {
         if (visited.isEmpty()) {
-            return awaitInitialChests(mc);
+            return awaitInitialChests(mc, baritone);
         }
         if (rescanForMore && handler.moreWorkToDo(mc) && rescans < RESCAN_LIMIT) {
             if (ticksInStep < RESCAN_SETTLE_TICKS) return Result.RUNNING;
@@ -214,21 +257,56 @@ public final class ChestRoute {
         return finish();
     }
 
-    private Result awaitInitialChests(Minecraft mc) {
+    private Result awaitInitialChests(Minecraft mc, IBaritone baritone) {
+        boolean nearArea = !boxes.isEmpty() && nearCenter(mc, ARRIVAL_DIST);
+        boolean pathing = baritone != null && baritone.getPathingBehavior().isPathing();
+        if (!nearArea && baritone != null && !boxes.isEmpty() && !pathing) {
+            baritone.getCustomGoalProcess().setGoalAndPath(new GoalGetToBlock(boxCenter()));
+            pathing = true;
+        }
         if (ticksInStep < RESCAN_SETTLE_TICKS) return Result.RUNNING;
+        initialWaitTicks += ticksInStep;
+        if (nearArea) nearTicks += ticksInStep;
         rescan(mc);
+        handler.debug("await: nearArea=" + nearArea + " pathing=" + pathing
+                + " waited=" + initialWaitTicks + "t nearTicks=" + nearTicks
+                + " player=" + mc.player.blockPosition().toShortString()
+                + " center=" + (boxes.isEmpty() ? "-" : boxCenter().toShortString())
+                + " found=" + queue.size());
         if (!queue.isEmpty()) {
             rescans = 0;
+            cancelBaritone(baritone);
+            saveCache(new ArrayList<>(queue));
             handler.chat("Found " + queue.size() + " chest(s) to service.");
             setStep(Step.PATH);
             return Result.RUNNING;
         }
-        if (++rescans >= CHUNK_LOAD_RETRIES) {
-            restoreBreak();
-            return Result.EMPTY;
+        boolean giveUp = nearArea
+                ? nearTicks >= NEAR_AREA_GIVEUP_TICKS
+                : initialWaitTicks >= (pathing ? PATH_TO_AREA_TIMEOUT_TICKS : CHUNK_LOAD_TIMEOUT_TICKS);
+        if (!giveUp) {
+            ticksInStep = 0;
+            return Result.RUNNING;
         }
-        ticksInStep = 0;
-        return Result.RUNNING;
+        cancelBaritone(baritone);
+        restoreBreak();
+        return Result.EMPTY;
+    }
+
+    private boolean nearCenter(Minecraft mc, double dist) {
+        return nearBlock(mc, boxCenter(), dist);
+    }
+
+    private boolean nearBlock(Minecraft mc, BlockPos c, double dist) {
+        double dx = mc.player.getX() - (c.getX() + 0.5);
+        double dy = mc.player.getY() - (c.getY() + 0.5);
+        double dz = mc.player.getZ() - (c.getZ() + 0.5);
+        return dx * dx + dy * dy + dz * dz <= dist * dist;
+    }
+
+    private BlockPos boxCenter() {
+        int[] b = boxes.get(0);
+        return new BlockPos((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2);
     }
 
     private Result retryOrBlock(BlockPos chest, String why) {
@@ -256,6 +334,31 @@ public final class ChestRoute {
         setStep(Step.PATH);
     }
 
+    private void reconcile(Minecraft mc) {
+        if (reconciled || cache == null || boxes.isEmpty()) return;
+        if (!nearCenter(mc, ARRIVAL_DIST)) return;
+        reconciled = true;
+        List<BlockPos> live = ContainerService.scanChests(mc.level, boxes, mc.player.blockPosition(), includeEnderChests);
+        if (seededFromCache) {
+            for (BlockPos p : live) {
+                if (!queue.contains(p) && !visited.contains(p)) queue.add(p);
+            }
+        }
+        saveCache(live);
+    }
+
+    private void saveCache(List<BlockPos> coords) {
+        if (cache != null && !coords.isEmpty()) cache.save(coords);
+    }
+
+    private boolean inBoxes(BlockPos p) {
+        int x = p.getX(), y = p.getY(), z = p.getZ();
+        for (int[] b : boxes) {
+            if (x >= b[0] && x <= b[3] && y >= b[1] && y <= b[4] && z >= b[2] && z <= b[5]) return true;
+        }
+        return false;
+    }
+
     private void rescan(Minecraft mc) {
         for (BlockPos p : ContainerService.scanChests(mc.level, boxes, mc.player.blockPosition(), includeEnderChests)) {
             if (!queue.contains(p) && !visited.contains(p)) {
@@ -269,6 +372,21 @@ public final class ChestRoute {
         ticksInStep = 0;
         clickCooldown = 0;
         actionClicks = 0;
+        lastActionSlot = -1;
+        lastActionCount = -1;
+        actionStalls = 0;
+    }
+
+    private boolean stalled(AbstractContainerMenu menu, int slot) {
+        int count = menu.getSlot(slot).getItem().getCount();
+        if (slot == lastActionSlot && lastActionCount != -1 && count >= lastActionCount) {
+            actionStalls++;
+        } else {
+            actionStalls = 0;
+        }
+        lastActionSlot = slot;
+        lastActionCount = count;
+        return actionStalls >= STALL_LIMIT;
     }
 
     private void cancelBaritone(IBaritone baritone) {

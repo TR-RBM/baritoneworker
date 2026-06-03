@@ -105,6 +105,8 @@ public final class MinerConfig {
 
     public boolean includeEnderChests = false;
 
+    public boolean debug = false;
+
     public void setArea(List<int[]> boxes) {
         chestBoxes.clear();
         chestBoxes.addAll(boxes);
@@ -160,6 +162,7 @@ public final class MinerConfig {
         p.setProperty("oreScanInterval", Integer.toString(oreScanInterval));
         p.setProperty("excludedOreGroups", String.join(",", excludedOreGroups));
         p.setProperty("includeEnderChests", Boolean.toString(includeEnderChests));
+        p.setProperty("debug", Boolean.toString(debug));
         p.setProperty("chestBoxes", serializeBoxes());
         try {
             Files.createDirectories(file().getParent());
@@ -213,6 +216,7 @@ public final class MinerConfig {
             if (!g.isBlank() && Ores.isGroup(g.trim())) excludedOreGroups.add(g.trim());
         }
         includeEnderChests = Boolean.parseBoolean(p.getProperty("includeEnderChests", Boolean.toString(includeEnderChests)));
+        debug = Boolean.parseBoolean(p.getProperty("debug", Boolean.toString(debug)));
         deserializeBoxes(p.getProperty("chestBoxes", ""));
         rebuildKeep();
     }
